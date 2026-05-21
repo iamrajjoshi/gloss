@@ -1,0 +1,81 @@
+{
+  "name": "getgloss",
+  "version": "0.1.0",
+  "description": "Local browser-based diff review for coding-agent loops.",
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "bin": {
+    "gloss": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "pnpm build:web && pnpm build:node",
+    "build:web": "vite build",
+    "build:node": "tsup",
+    "check": "biome check .",
+    "format": "biome format --write .",
+    "homebrew:formula": "tsx scripts/render-homebrew-formula.ts",
+    "prepack": "pnpm build",
+    "dev:web": "vite --host 127.0.0.1",
+    "setup": "tsx scripts/dev-cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@pierre/diffs": "^1.2.1",
+    "@tailwindcss/vite": "^4.1.7",
+    "commander": "^14.0.0",
+    "execa": "^9.5.3",
+    "get-port": "^7.1.0",
+    "hono": "^4.7.10",
+    "lucide-react": "^1.16.0",
+    "open": "^10.1.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "ulid": "^3.0.0",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.6",
+    "@types/node": "^24.0.1",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.2",
+    "playwright": "^1.52.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.3"
+  },
+  "keywords": [
+    "diff",
+    "review",
+    "coding-agents",
+    "mcp"
+  ],
+  "author": "Raj Joshi",
+  "license": "MIT",
+  "homepage": "https://getgloss.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamrajjoshi/gloss.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iamrajjoshi/gloss/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

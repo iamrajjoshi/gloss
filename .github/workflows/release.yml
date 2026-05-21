@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+      - run: pnpm build
+
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Pack release artifact
+        run: |
+          mkdir -p dist/release
+          npm pack --pack-destination dist/release
+          shasum -a 256 dist/release/*.tgz > dist/release/checksums.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/release/*.tgz dist/release/checksums.txt \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+
+      - name: Resolve npm tarball checksum
+        id: npm_tarball
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          url="$(npm view "getgloss@${version}" dist.tarball)"
+          curl -fsSL "$url" -o /tmp/getgloss.tgz
+          sha256="$(shasum -a 256 /tmp/getgloss.tgz | awk '{print $1}')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: iamrajjoshi/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Homebrew formula
+        run: |
+          pnpm homebrew:formula -- \
+            --version "${{ steps.npm_tarball.outputs.version }}" \
+            --sha256 "${{ steps.npm_tarball.outputs.sha256 }}" \
+            --out homebrew-tap/Formula/gloss.rb
+
+      - name: Push Homebrew formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gloss.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date"
+          else
+            git commit -m "gloss ${{ steps.npm_tarball.outputs.version }}"
+            git push
+          fi
+
