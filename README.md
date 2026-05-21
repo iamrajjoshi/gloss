@@ -101,9 +101,12 @@ Required repository secrets:
 
 - `NPM_TOKEN`
 
-## Notes
+## Attribution
 
-Gloss uses `@pierre/diffs` for diff parsing/rendering integration points and
-skins the browser chrome for the local review workflow. The package is
-Apache-2.0 licensed, which is compatible with this MIT project but worth
-calling out before publication.
+Gloss uses [`@pierre/diffs`](https://www.npmjs.com/package/@pierre/diffs) by
+[The Pierre Computer Company](https://pierre.computer/) for diff parsing and
+rendering integration points, with Gloss-specific browser chrome around the
+local review workflow.
+
+`@pierre/diffs` is licensed under Apache-2.0. Gloss is not affiliated with or
+endorsed by The Pierre Computer Company.
