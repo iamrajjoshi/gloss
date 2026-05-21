@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.svg" alt="Gloss logo" width="88" height="88" />
+</p>
+
 # Gloss
 
 Gloss is a local browser review loop for coding agents. It captures your current
@@ -18,24 +22,16 @@ For one-off use:
 npx getgloss open --base HEAD --json
 ```
 
-For agent setup, use the Roughdraft-style prompt:
+For a new agent chat, use:
 
 ```text
-Install Gloss for me using `npm i -g getgloss`, then read https://getgloss.dev/setup.md and set yourself up to use it.
+Install Gloss with npm. Then read https://getgloss.dev/setup.md.
 ```
 
-Homebrew is wired for the release flow and will be available after the tap
-formula is published:
-
-```bash
-brew install iamrajjoshi/tap/gloss
-```
-
-The hosted install script defaults to npm and can be switched to Homebrew:
+Hosted install script:
 
 ```bash
 curl -fsSL https://getgloss.dev/install.sh | sh
-GLOSS_INSTALL_METHOD=brew curl -fsSL https://getgloss.dev/install.sh | sh
 ```
 
 ## Commands
@@ -68,8 +64,8 @@ Completed reviews are written to:
   original/
 ```
 
-`feedback.json` is the agent-friendly source of truth. `feedback.md` is a
-human-readable summary ordered by file and line.
+`feedback.json` is the machine-readable payload. `feedback.md` is a readable
+summary ordered by file and line.
 
 ## MCP
 
@@ -104,13 +100,10 @@ Releases follow Willow's tag-driven shape:
 2. GitHub Actions runs checks, tests, and the production build.
 3. The package is published to npm as `getgloss`.
 4. A GitHub release is created with `npm pack` output and checksums.
-5. The release job renders `Formula/gloss.rb` and pushes it to
-   `iamrajjoshi/homebrew-tap` using `HOMEBREW_TAP_GITHUB_TOKEN`.
 
 Required repository secrets:
 
 - `NPM_TOKEN`
-- `HOMEBREW_TAP_GITHUB_TOKEN`
 
 ## Notes
 

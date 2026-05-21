@@ -45,7 +45,7 @@ export function Review({ reviewId }: { reviewId: string }) {
       <header className="topbar">
         <div>
           <div className="brand-row">
-            <span className="brand-mark">G</span>
+            <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
             <h1>Gloss</h1>
           </div>
           <p className="muted">

@@ -12,7 +12,6 @@ verifiable, and scoped to the v0.1 flow unless the user asks otherwise.
 - Typecheck: `pnpm exec tsc --noEmit`
 - Dev web UI: `pnpm dev:web`
 - Local CLI after build: `node dist/cli/index.js --help`
-- Render Homebrew formula: `pnpm homebrew:formula -- --version 0.1.0 --sha256 <sha256>`
 
 ## Architecture
 
