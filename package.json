@@ -19,7 +19,6 @@
     "build:node": "tsup",
     "check": "biome check .",
     "format": "biome format --write .",
-    "homebrew:formula": "tsx scripts/render-homebrew-formula.ts",
     "prepack": "pnpm build",
     "dev:web": "vite --host 127.0.0.1",
     "setup": "tsx scripts/dev-cli.ts",

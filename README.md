@@ -24,18 +24,10 @@ For agent setup, use the Roughdraft-style prompt:
 Install Gloss for me using `npm i -g getgloss`, then read https://getgloss.dev/setup.md and set yourself up to use it.
 ```
 
-Homebrew is wired for the release flow and will be available after the tap
-formula is published:
-
-```bash
-brew install iamrajjoshi/tap/gloss
-```
-
-The hosted install script defaults to npm and can be switched to Homebrew:
+The hosted install script is npm-only:
 
 ```bash
 curl -fsSL https://getgloss.dev/install.sh | sh
-GLOSS_INSTALL_METHOD=brew curl -fsSL https://getgloss.dev/install.sh | sh
 ```
 
 ## Commands
@@ -104,13 +96,10 @@ Releases follow Willow's tag-driven shape:
 2. GitHub Actions runs checks, tests, and the production build.
 3. The package is published to npm as `getgloss`.
 4. A GitHub release is created with `npm pack` output and checksums.
-5. The release job renders `Formula/gloss.rb` and pushes it to
-   `iamrajjoshi/homebrew-tap` using `HOMEBREW_TAP_GITHUB_TOKEN`.
 
 Required repository secrets:
 
 - `NPM_TOKEN`
-- `HOMEBREW_TAP_GITHUB_TOKEN`
 
 ## Notes
 
