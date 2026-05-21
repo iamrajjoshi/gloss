@@ -24,6 +24,22 @@ For agent setup, use the Roughdraft-style prompt:
 Install Gloss for me using `npm i -g getgloss`, then read https://getgloss.dev/setup.md and set yourself up to use it.
 ```
 
+### Claude Code Skill
+
+Gloss ships a Claude Code skill at `skill/SKILL.md`. Install it with the
+[`skills` CLI](https://github.com/vercel-labs/agent-skills):
+
+```bash
+# Global (available across all projects)
+npx skills add iamrajjoshi/gloss --skill gloss -g -a claude-code
+
+# Project-local (only inside the current project)
+npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
+```
+
+`-g` installs to `~/.claude/skills/`, `-a claude-code` targets Claude Code, and
+`--skill gloss` installs only the Gloss skill from the repo.
+
 The hosted install script is npm-only:
 
 ```bash

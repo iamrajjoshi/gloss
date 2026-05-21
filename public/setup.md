@@ -24,6 +24,24 @@ npm i -g getgloss
 If the user did not explicitly ask you to install software, ask before
 installing a global npm package.
 
+## Install the Claude Code Skill
+
+Gloss ships a Claude Code skill in the repository at `skill/SKILL.md`. If the
+user wants Claude Code to know when to use Gloss automatically, install it with
+the `skills` CLI:
+
+```bash
+# Global (available across all projects)
+npx skills add iamrajjoshi/gloss --skill gloss -g -a claude-code
+
+# Project-local (only inside the current project)
+npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
+```
+
+Use the global install for a cross-project review workflow. Use the
+project-local install only when the user wants Gloss behavior scoped to the
+current repo.
+
 ## Update Your Persistent Instructions
 
 Add Gloss guidance to the persistent instruction file this agent will actually
@@ -130,4 +148,3 @@ Diagnose setup:
 ```bash
 gloss doctor
 ```
-
