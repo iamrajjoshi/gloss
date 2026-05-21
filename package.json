@@ -1,10 +1,11 @@
 {
   "name": "getgloss",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local browser-based diff review for coding-agent loops.",
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "bin": {
+    "getgloss": "./dist/cli/index.js",
     "gloss": "./dist/cli/index.js"
   },
   "files": [
