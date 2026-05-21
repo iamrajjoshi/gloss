@@ -1,8 +1,9 @@
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import packageJson from '../../package.json';
 
-export const packageVersion = '0.1.0';
+export const packageVersion = packageJson.version;
 
 export function expandHome(input: string): string {
   if (input === '~') {
