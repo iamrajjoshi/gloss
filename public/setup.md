@@ -18,11 +18,17 @@ gloss help
 If Gloss is missing and the user has asked you to install it, install it with:
 
 ```bash
+brew install iamrajjoshi/tap/gloss
+```
+
+If Homebrew is unavailable, use npm:
+
+```bash
 npm i -g getgloss
 ```
 
 If the user did not explicitly ask you to install software, ask before
-installing a global npm package.
+installing a global package.
 
 ## Install the Claude Code Skill
 

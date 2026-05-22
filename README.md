@@ -12,6 +12,13 @@ agent to re-ingest.
 ## Install
 
 ```bash
+brew install iamrajjoshi/tap/gloss
+gloss open --json
+```
+
+With npm:
+
+```bash
 npm install -g getgloss
 gloss open --json
 ```
@@ -25,7 +32,7 @@ npx getgloss open --json
 For a new agent chat, use:
 
 ```text
-Install Gloss with npm. Then read https://getgloss.dev/setup.md.
+Install Gloss with Homebrew or npm. Then read https://getgloss.dev/setup.md.
 ```
 
 ### Claude Code Skill
@@ -44,7 +51,7 @@ npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
 `-g` installs to `~/.claude/skills/`, `-a claude-code` targets Claude Code, and
 `--skill gloss` installs only the Gloss skill from the repo.
 
-The hosted install script is npm-only:
+The hosted install script remains npm-only:
 
 ```bash
 curl -fsSL https://getgloss.dev/install.sh | sh
@@ -122,10 +129,12 @@ Releases follow Willow's tag-driven shape:
 2. GitHub Actions runs checks, tests, and the production build.
 3. The package is published to npm as `getgloss`.
 4. A GitHub release is created with `npm pack` output and checksums.
+5. The Homebrew formula is updated in `iamrajjoshi/homebrew-tap`.
 
 Required repository secrets:
 
 - `NPM_TOKEN`
+- `HOMEBREW_TAP_GITHUB_TOKEN`
 
 ## Attribution
 

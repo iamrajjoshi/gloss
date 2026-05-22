@@ -19,6 +19,7 @@ export function SetupPage() {
 
       <section className="setup-section">
         <h2>Install</h2>
+        <pre>brew install iamrajjoshi/tap/gloss</pre>
         <pre>npm install -g getgloss</pre>
         <pre>gloss help</pre>
       </section>
@@ -26,7 +27,7 @@ export function SetupPage() {
       <section className="setup-section">
         <h2>Agent Instruction</h2>
         <p>Give a new agent chat this instruction:</p>
-        <pre>Install Gloss with npm. Then read https://getgloss.dev/setup.md.</pre>
+        <pre>Install Gloss with Homebrew or npm. Then read https://getgloss.dev/setup.md.</pre>
       </section>
 
       <section className="setup-section">

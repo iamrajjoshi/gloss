@@ -48,3 +48,66 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/release/*.tgz dist/release/checksums.txt \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes
+
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          tarball_url="https://registry.npmjs.org/getgloss/-/getgloss-${version}.tgz"
+          tmpdir="$(mktemp -d)"
+
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsSL "${tarball_url}" -o "${tmpdir}/getgloss.tgz"; then
+              break
+            fi
+            if [ "${attempt}" = "6" ]; then
+              exit 1
+            fi
+            sleep 5
+          done
+          sha256="$(shasum -a 256 "${tmpdir}/getgloss.tgz" | awk '{print $1}')"
+
+          git clone https://github.com/iamrajjoshi/homebrew-tap.git "${tmpdir}/homebrew-tap"
+          cd "${tmpdir}/homebrew-tap"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/iamrajjoshi/homebrew-tap.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          mkdir -p Formula
+          cat > Formula/gloss.rb <<EOF
+          # typed: false
+          # frozen_string_literal: true
+
+          class Gloss < Formula
+            desc "Local browser-based diff review for coding-agent loops"
+            homepage "https://github.com/iamrajjoshi/gloss"
+            url "${tarball_url}"
+            sha256 "${sha256}"
+            license "MIT"
+
+            depends_on "node"
+
+            def install
+              system "npm", "install", *std_npm_args
+              bin.install_symlink libexec.glob("bin/*")
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/gloss --version")
+            end
+          end
+          EOF
+
+          ruby -pi -e 'sub(/^          /, "")' Formula/gloss.rb
+
+          if [ -z "$(git status --porcelain -- Formula/gloss.rb)" ]; then
+            echo "Homebrew formula is already up to date."
+            exit 0
+          fi
+
+          git add Formula/gloss.rb
+          git commit -m "Brew formula update for gloss version ${GITHUB_REF_NAME}"
+          git push origin main

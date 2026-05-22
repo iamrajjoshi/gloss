@@ -12,12 +12,13 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
-const installCommand = 'npm install -g getgloss';
+const installCommand = 'brew install iamrajjoshi/tap/gloss';
+const npmInstallCommand = 'npm install -g getgloss';
 const runCommand = 'gloss open --base HEAD --json';
 const npxCommand = 'npx getgloss open --base HEAD --json';
 const skillInstallCommand =
   'mkdir -p ~/.claude/skills/gloss && curl -fsSL https://getgloss.dev/skill/SKILL.md -o ~/.claude/skills/gloss/SKILL.md';
-const agentPrompt = 'Install Gloss with npm. Then read https://getgloss.dev/setup.md.';
+const agentPrompt = 'Install Gloss with Homebrew or npm. Then read https://getgloss.dev/setup.md.';
 
 function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -203,7 +204,7 @@ export function MarketingHome() {
             </p>
             <div className="hero-actions">
               <a className="hero-primary" href="#install">
-                Install with npm
+                Install with Homebrew
                 <ArrowRight size={17} />
               </a>
               <a className="hero-secondary" href="/setup/">
@@ -227,6 +228,7 @@ export function MarketingHome() {
         </div>
         <div className="install-grid">
           <CommandLine command={installCommand} />
+          <CommandLine command={npmInstallCommand} />
           <CommandLine command={runCommand} />
           <CommandLine command={npxCommand} />
         </div>
