@@ -10,11 +10,13 @@ when the current working tree has code changes.
 From the repo root, open a blocking review with:
 
 ```bash
-gloss open --json --base HEAD
+gloss open --json
 ```
 
-Use `--base <ref>` when the user specifies a comparison base such as
-`origin/main` or `origin/master`.
+Gloss opens staged, unstaged, and untracked working changes first. If the
+working tree is clean, it falls back to the branch diff against the best
+available merge-base. Use `--base <ref>` only when the user specifies a
+comparison base such as `HEAD`, `origin/main`, or `origin/master`.
 
 Leave the command running. Do not interrupt, kill, background, detach, or treat
 the waiting process as cleanup. The wait is intentional: Gloss exits after the
@@ -55,4 +57,3 @@ gloss mcp
 
 The MCP server exposes tools to list pending reviews, fetch review details,
 watch for completion, read feedback, and mark a review resolved.
-

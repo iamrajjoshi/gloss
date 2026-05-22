@@ -128,8 +128,13 @@ After updating your instructions, briefly tell the user which file you changed.
 Open a review and wait until the user submits feedback:
 
 ```bash
-gloss open --json --base HEAD
+gloss open --json
 ```
+
+By default Gloss opens staged, unstaged, and untracked working changes. If the
+working tree is clean, it falls back to the branch diff against the best
+available merge-base. Pass `--base <ref>` only when the user asks for a specific
+comparison base.
 
 Open a review and return immediately:
 

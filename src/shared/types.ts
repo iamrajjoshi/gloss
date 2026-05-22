@@ -44,10 +44,35 @@ export interface DiffFile {
   hunks: DiffHunk[];
 }
 
+export type DiffScopeMode = 'working' | 'branch' | 'explicit';
+
+export type DiffFallbackReason = 'working-tree-clean' | 'missing-branch-base' | null;
+
+export interface DiffRef {
+  ref: string;
+  sha: string | null;
+}
+
+export interface DiffStats {
+  files: number;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffScope {
+  mode: DiffScopeMode;
+  requestedBase: string | null;
+  base: { ref: string; sha: string };
+  comparison: DiffRef;
+  fallbackReason: DiffFallbackReason;
+}
+
 export interface DiffPayload {
   base: { ref: string; sha: string };
   branch: string | null;
   cwd: string;
+  scope: DiffScope;
+  stats: DiffStats;
   rawDiff: string;
   files: DiffFile[];
   capturedAt: string;

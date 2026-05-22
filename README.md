@@ -13,13 +13,13 @@ agent to re-ingest.
 
 ```bash
 npm install -g getgloss
-gloss open --base HEAD --json
+gloss open --json
 ```
 
 For one-off use:
 
 ```bash
-npx getgloss open --base HEAD --json
+npx getgloss open --json
 ```
 
 For a new agent chat, use:
@@ -62,10 +62,16 @@ gloss mcp
 gloss doctor
 ```
 
-`gloss open` lazy-starts a background server, captures tracked and untracked
-changes against the base ref, registers a review session, opens
+`gloss open` lazy-starts a background server, captures staged, unstaged, and
+untracked working changes, registers a review session, opens
 `http://localhost:<port>/review/<reviewId>`, and waits for submission unless
-`--no-watch` is passed.
+`--no-watch` is passed. When the working tree is clean and no explicit
+`--base` is provided, Gloss falls back to the current branch diff against the
+best available merge-base from upstream, `origin/HEAD`, `origin/main`, or
+`origin/master`.
+
+Use `--base <ref>` when you want an explicit comparison. Explicit base mode
+keeps the old behavior and does not fall back to a branch diff.
 
 ## Feedback Files
 

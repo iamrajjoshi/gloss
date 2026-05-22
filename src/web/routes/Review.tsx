@@ -40,17 +40,35 @@ export function Review({ reviewId }: { reviewId: string }) {
     );
   }
 
+  const scope = record.diff.scope;
+  const stats = record.diff.stats;
+
   return (
     <main className="review-shell">
       <header className="topbar">
-        <div>
-          <div className="brand-row">
-            <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
-            <h1>Gloss</h1>
+        <div className="topbar-main">
+          <img className="brand-mark" src="/logo.svg" alt="" />
+          <div className="review-heading">
+            <p className="product-name">Gloss</p>
+            <h1>{scopeTitle(record)}</h1>
+            <div className="meta-row">
+              <span title={`${scope.base.ref} (${scope.base.sha})`}>
+                Base {scope.base.ref} ({scope.base.sha.slice(0, 7)})
+              </span>
+              <span
+                title={`${scope.comparison.ref}${scope.comparison.sha ? ` (${scope.comparison.sha})` : ''}`}
+              >
+                Compare {scope.comparison.ref}
+                {scope.comparison.sha ? ` (${scope.comparison.sha.slice(0, 7)})` : ''}
+              </span>
+              <span>
+                {stats.files} {stats.files === 1 ? 'file' : 'files'}
+              </span>
+              <span>
+                +{stats.additions} -{stats.deletions}
+              </span>
+            </div>
           </div>
-          <p className="muted">
-            Base {record.meta.base.ref} ({record.meta.base.sha.slice(0, 7)})
-          </p>
         </div>
         <div className="branch-pill" title={record.meta.branch ?? 'Detached HEAD'}>
           <GitBranch size={16} />
@@ -61,4 +79,15 @@ export function Review({ reviewId }: { reviewId: string }) {
       <SubmitBar reviewId={reviewId} />
     </main>
   );
+}
+
+function scopeTitle(record: ReviewRecord): string {
+  switch (record.diff.scope.mode) {
+    case 'branch':
+      return 'Branch diff';
+    case 'explicit':
+      return `Diff against ${record.diff.scope.requestedBase ?? record.diff.base.ref}`;
+    case 'working':
+      return 'Working changes';
+  }
 }

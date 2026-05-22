@@ -38,15 +38,15 @@ program
 
 program
   .command('open')
-  .description('Capture diff vs. base and open it for review')
-  .option('--base <ref>', 'base git ref', 'HEAD')
+  .description('Capture local changes and open them for review')
+  .option('--base <ref>', 'explicit base git ref')
   .option('--print-url', 'print review URL')
   .option('--no-open', 'do not open a browser')
   .option('--no-watch', 'return immediately after registering the review')
   .option('--timeout <seconds>', 'watch timeout in seconds', Number)
   .action(
     async (options: {
-      base: string;
+      base?: string;
       printUrl?: boolean;
       open?: boolean;
       watch?: boolean;
@@ -66,7 +66,7 @@ program
       }
 
       if (options.watch === false) {
-        const result = { reviewId: meta.id, url, files: diff.files.length };
+        const result = { reviewId: meta.id, url, files: diff.files.length, scope: diff.scope.mode };
         globals.json ? printJson(result) : printPlain(`Review ${meta.id}: ${url}`);
         return;
       }
