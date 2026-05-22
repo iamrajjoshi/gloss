@@ -223,6 +223,7 @@ export function MarketingHome() {
       <section className="marketing-band install-band" id="install">
         <div className="section-heading">
           <p>Install</p>
+          <h2>Start the review loop in one command.</h2>
         </div>
         <div className="install-grid">
           <CommandLine command={installCommand} />
@@ -242,6 +243,7 @@ export function MarketingHome() {
       <section className="marketing-band skill-band" id="skill">
         <div className="section-heading">
           <p>Skill</p>
+          <h2>Teach agents where to send feedback.</h2>
         </div>
         <div className="skill-layout">
           <div className="skill-copy">
@@ -262,6 +264,7 @@ export function MarketingHome() {
       <section className="marketing-band workflow-band" id="workflow">
         <div className="section-heading">
           <p>Workflow</p>
+          <h2>A local loop for before-PR review.</h2>
         </div>
         <div className="workflow-grid">
           <WorkflowStep
@@ -278,6 +281,7 @@ export function MarketingHome() {
       <section className="marketing-band contract-band" id="contract">
         <div className="section-heading">
           <p>Output</p>
+          <h2>Structured feedback, written into the repo.</h2>
         </div>
         <div className="contract-layout">
           <pre>{`<repo>/.gloss/reviews/<reviewId>/

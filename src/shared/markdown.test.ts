@@ -61,4 +61,28 @@ describe('serializeFeedbackMarkdown', () => {
       "
     `);
   });
+
+  it('uses a diff fence for mixed visual diff snippets', () => {
+    const bundle: FeedbackBundle = {
+      version: 1,
+      reviewId: '01HFXJ3K7Z6E2BQYR4M0V8N5DH',
+      timestamp: '2026-05-21T14:32:11Z',
+      base: { ref: 'HEAD', sha: 'a3f8b21ffffff' },
+      branch: 'raj--gloss--test',
+      comments: [
+        {
+          id: 'a',
+          filePath: 'src/web/styles.css',
+          startLine: 10,
+          endLine: 12,
+          side: 'R',
+          body: 'keep the new value',
+          originalSnippet: ' box {\n-  color: red;\n+  color: green;',
+          createdAt: '2026-05-21T14:32:11Z'
+        }
+      ]
+    };
+
+    expect(serializeFeedbackMarkdown(bundle)).toContain('```diff\n box {');
+  });
 });

@@ -41,6 +41,15 @@ function languageForPath(filePath: string): string {
   return ext ? (map[ext] ?? ext) : '';
 }
 
+function languageForSnippet(filePath: string, snippet: string): string {
+  const lines = snippet.split('\n').filter((line) => line.length > 0);
+  const looksLikeUnifiedDiff =
+    lines.length > 0 &&
+    lines.some((line) => line.startsWith('+') || line.startsWith('-')) &&
+    lines.every((line) => line.startsWith('+') || line.startsWith('-') || line.startsWith(' '));
+  return looksLikeUnifiedDiff ? 'diff' : languageForPath(filePath);
+}
+
 function byFileThenLine(a: Comment, b: Comment): number {
   return (
     a.filePath.localeCompare(b.filePath) ||
@@ -73,7 +82,7 @@ export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
       lines.push(heading, comment.body.trim(), '');
       if (snippet) {
         const fence = fenceFor(snippet);
-        lines.push(`${fence}${languageForPath(comment.filePath)}`, snippet, fence, '');
+        lines.push(`${fence}${languageForSnippet(comment.filePath, snippet)}`, snippet, fence, '');
       }
     }
   }
