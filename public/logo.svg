@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Gloss logo</title>
+  <desc id="desc">A dark rounded square with red and green diff hunks.</desc>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#14171B" />
+  <rect x="9" y="9" width="238" height="238" rx="53" fill="none" stroke="#56606C" stroke-width="2" />
+  <rect x="36" y="56" width="150" height="72" rx="26" fill="#4B1F26" />
+  <rect x="36.5" y="56.5" width="149" height="71" rx="25.5" fill="none" stroke="#EF8A8C" stroke-opacity="0.45" />
+  <rect x="70" y="128" width="150" height="72" rx="26" fill="#183C2B" />
+  <rect x="70.5" y="128.5" width="149" height="71" rx="25.5" fill="none" stroke="#74D59A" stroke-opacity="0.5" />
+  <path d="M68 92H118" fill="none" stroke="#F4F1EA" stroke-width="16" stroke-linecap="round" />
+  <path d="M103 164H153M128 139V189" fill="none" stroke="#F4F1EA" stroke-width="16" stroke-linecap="round" />
+  <path d="M154 92H164" fill="none" stroke="#EF8A8C" stroke-width="16" stroke-linecap="round" />
+  <path d="M187 164H197" fill="none" stroke="#74D59A" stroke-width="16" stroke-linecap="round" />
+</svg>

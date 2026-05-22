@@ -1,16 +1,15 @@
+import { MarketingHome } from './routes/MarketingHome';
 import { Review } from './routes/Review';
+import { SetupPage } from './routes/SetupPage';
 
 export function App() {
+  if (window.location.pathname === '/setup' || window.location.pathname === '/setup/') {
+    return <SetupPage />;
+  }
+
   const reviewMatch = /^\/review\/([^/]+)/.exec(window.location.pathname);
   if (!reviewMatch) {
-    return (
-      <main className="empty-shell">
-        <section className="empty-panel">
-          <h1>Gloss</h1>
-          <p>Open a review from the CLI with `gloss open`.</p>
-        </section>
-      </main>
-    );
+    return <MarketingHome />;
   }
 
   return <Review reviewId={reviewMatch[1]} />;

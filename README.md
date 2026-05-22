@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.svg" alt="Gloss logo" width="88" height="88" />
+</p>
+
 # Gloss
 
 Gloss is a local browser review loop for coding agents. It captures your current
@@ -18,10 +22,10 @@ For one-off use:
 npx getgloss open --base HEAD --json
 ```
 
-For agent setup, use the Roughdraft-style prompt:
+For a new agent chat, use:
 
 ```text
-Install Gloss for me using `npm i -g getgloss`, then read https://getgloss.dev/setup.md and set yourself up to use it.
+Install Gloss with npm. Then read https://getgloss.dev/setup.md.
 ```
 
 ### Claude Code Skill
@@ -76,8 +80,8 @@ Completed reviews are written to:
   original/
 ```
 
-`feedback.json` is the agent-friendly source of truth. `feedback.md` is a
-human-readable summary ordered by file and line.
+`feedback.json` is the machine-readable payload. `feedback.md` is a readable
+summary ordered by file and line.
 
 ## MCP
 
