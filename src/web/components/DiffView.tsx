@@ -3,7 +3,7 @@ import { MessageSquare } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile, DiffLine, ReviewRecord, Side } from '../../shared/types';
 import { useReviewStore } from '../store';
-import { CommentPopover } from './CommentPopover';
+import { CommentComposer } from './CommentPopover';
 import { FileHeader } from './FileHeader';
 
 interface RowRef {
@@ -20,6 +20,8 @@ interface SelectionRef {
 
 export function DiffView({ record }: { record: ReviewRecord }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+  const draft = useReviewStore((state) => state.draft);
+  const setDraft = useReviewStore((state) => state.setDraft);
   const pierreFiles = useMemo(() => {
     try {
       return parsePatchFiles(record.diff.rawDiff, record.meta.id).flatMap((patch) => patch.files)
@@ -41,13 +43,16 @@ export function DiffView({ record }: { record: ReviewRecord }) {
               <FileHeader
                 file={file}
                 collapsed={collapsed}
-                onToggle={() =>
+                onToggle={() => {
+                  if (!collapsed && draft?.filePath === file.path) {
+                    setDraft(null);
+                  }
                   setCollapsedFiles((current) => {
                     const next = new Set(current);
                     next.has(file.path) ? next.delete(file.path) : next.add(file.path);
                     return next;
-                  })
-                }
+                  });
+                }}
               />
               {collapsed ? null : <DiffFileTable file={file} />}
             </article>
@@ -122,7 +127,8 @@ function DiffFileTable({ file }: { file: DiffFile }) {
     const { start: row, end } = selection;
     const startLine = Math.min(row.line, end.line);
     const endLine = Math.max(row.line, end.line);
-    const snippet = collectSnippet(file, row.side, startLine, endLine) || row.snippet;
+    const snippet =
+      collectVisualSnippet(file, visualIndexByLine, row.side, startLine, endLine) || row.snippet;
     setDraft({
       filePath: file.path,
       side: row.side,
@@ -247,10 +253,20 @@ function DiffFileTable({ file }: { file: DiffFile }) {
                 snippet: line.content
               };
               const visualIndex = visualIndexByLine.get(rowKey(side, lineNumber));
-              const selected =
-                visualIndex != null &&
-                (isInVisualRange(visualIndex, dragVisualRange) ||
-                  isInVisualRange(visualIndex, draftVisualRange));
+              const activeVisualRange =
+                visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
+                  ? dragVisualRange
+                  : visualIndex != null && isInVisualRange(visualIndex, draftVisualRange)
+                    ? draftVisualRange
+                    : null;
+              const selectionClass =
+                visualIndex != null && activeVisualRange
+                  ? selectionClassForLine(
+                      visualIndex,
+                      activeVisualRange.start,
+                      activeVisualRange.end
+                    )
+                  : '';
               const showDraftComposer =
                 draft &&
                 draft.filePath === file.path &&
@@ -259,15 +275,14 @@ function DiffFileTable({ file }: { file: DiffFile }) {
               const rowComments = fileComments.filter(
                 (comment) =>
                   comment.side === side &&
-                  lineNumber >= comment.startLine &&
-                  lineNumber <= comment.endLine
+                  lineNumber === Math.max(comment.startLine, comment.endLine)
               );
               return (
                 <div
                   key={`${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
                 >
                   <button
-                    className={`diff-row ${line.type} ${selected ? 'selected' : ''}`}
+                    className={`diff-row ${line.type} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
                     data-file-path={file.path}
                     data-line={lineNumber}
                     data-side={side}
@@ -275,6 +290,7 @@ function DiffFileTable({ file }: { file: DiffFile }) {
                     onMouseDown={(event) => startSelection(row, event)}
                     onMouseEnter={(event) => extendSelectionFromElement(event.currentTarget)}
                   >
+                    {selectionClass ? <span className="selection-rail" aria-hidden="true" /> : null}
                     <span className="line-number old">{line.oldLine ?? ''}</span>
                     <span className="line-number new">{line.newLine ?? ''}</span>
                     <span className="marker">{markerForLine(line)}</span>
@@ -286,11 +302,7 @@ function DiffFileTable({ file }: { file: DiffFile }) {
                       <span>{comment.body}</span>
                     </div>
                   ))}
-                  {showDraftComposer ? (
-                    <div className="draft-comment-row">
-                      <CommentPopover />
-                    </div>
-                  ) : null}
+                  {showDraftComposer ? <CommentComposer tone={line.type} /> : null}
                 </div>
               );
             })}
@@ -315,13 +327,30 @@ function sideForLine(line: DiffLine): Side {
   return line.type === 'delete' ? 'L' : 'R';
 }
 
+function lineNumberForLine(line: DiffLine): number | null {
+  return sideForLine(line) === 'L' ? line.oldLine : line.newLine;
+}
+
+function selectionClassForLine(lineNumber: number, startLine: number, endLine: number): string {
+  if (startLine === endLine) {
+    return 'range-selected range-single';
+  }
+  if (lineNumber === startLine) {
+    return 'range-selected range-start';
+  }
+  if (lineNumber === endLine) {
+    return 'range-selected range-end';
+  }
+  return 'range-selected range-middle';
+}
+
 function buildVisualIndex(file: DiffFile): Map<string, number> {
   const indexByLine = new Map<string, number>();
   let visualIndex = 0;
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
       const side = sideForLine(line);
-      const lineNumber = side === 'L' ? line.oldLine : line.newLine;
+      const lineNumber = lineNumberForLine(line);
       if (lineNumber != null) {
         indexByLine.set(rowKey(side, lineNumber), visualIndex);
         visualIndex += 1;
@@ -356,21 +385,34 @@ function isInVisualRange(index: number, range: { start: number; end: number } | 
   return Boolean(range && index >= range.start && index <= range.end);
 }
 
-function collectSnippet(file: DiffFile, side: Side, startLine: number, endLine: number): string {
-  const lines: string[] = [];
+function collectVisualSnippet(
+  file: DiffFile,
+  indexByLine: Map<string, number>,
+  side: Side,
+  startLine: number,
+  endLine: number
+): string {
+  const selectedLines: DiffLine[] = [];
+  const range = visualRangeFor(indexByLine, side, startLine, endLine);
+  if (!range) {
+    return '';
+  }
+  let visualIndex = 0;
+
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      const lineNumber = side === 'L' ? line.oldLine : line.newLine;
-      const lineSide = sideForLine(line);
-      if (
-        lineSide === side &&
-        lineNumber != null &&
-        lineNumber >= startLine &&
-        lineNumber <= endLine
-      ) {
-        lines.push(line.content);
+      if (lineNumberForLine(line) == null) {
+        continue;
       }
+      if (visualIndex >= range.start && visualIndex <= range.end) {
+        selectedLines.push(line);
+      }
+      visualIndex += 1;
     }
   }
-  return lines.join('\n');
+
+  const hasMixedLineTypes = new Set(selectedLines.map((line) => line.type)).size > 1;
+  return selectedLines
+    .map((line) => (hasMixedLineTypes ? `${markerForLine(line)}${line.content}` : line.content))
+    .join('\n');
 }

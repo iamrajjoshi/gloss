@@ -15,6 +15,8 @@ const mimeTypes: Record<string, string> = {
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.sh': 'text/x-shellscript; charset=utf-8',
   '.svg': 'image/svg+xml'
 };
 
@@ -121,10 +123,15 @@ export function createApp(origin: string): Hono {
     return c.json({ ok: true, path: resolvedPath });
   });
 
+  app.get('/logo.svg', serveRootFile('logo.svg', mimeTypes['.svg']));
+  app.get('/og.png', serveRootFile('og.png', mimeTypes['.png']));
+  app.get('/install.sh', serveRootFile('install.sh', mimeTypes['.sh']));
   app.get('/setup.md', serveRootFile('setup.md', 'text/markdown; charset=utf-8'));
   app.get('/prompt.md', serveRootFile('prompt.md', 'text/markdown; charset=utf-8'));
-  app.get('/logo.svg', serveRootFile('logo.svg', 'image/svg+xml'));
+  app.get('/skill/SKILL.md', serveRootFile('skill/SKILL.md', 'text/markdown; charset=utf-8'));
   app.get('/assets/*', serveAsset);
+  app.get('/setup', serveIndex);
+  app.get('/setup/', serveIndex);
   app.get('/review/:id', serveIndex);
   app.get('/', serveIndex);
 

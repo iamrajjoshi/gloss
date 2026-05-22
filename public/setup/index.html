@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gloss Setup</title>
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    />
     <meta
       name="description"
       content="Set up Gloss for local code-diff reviews with coding agents."
@@ -12,39 +18,74 @@
     <style>
       :root {
         color-scheme: dark;
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-        background: #101113;
-        color: #f4f1ea;
+        --color-midnight-ink: #111111;
+        --color-site-accent: #3fb950;
+        --color-ghost-ash: #f9f9f9;
+        --color-deep-graphite: #2b2b2b;
+        --color-muted-stone: #b7b3a2;
+        --color-light-grayscale: #eeeeee;
+        --color-shadow-ink: #000000;
+        --color-subtle-gray: #d6d6d6;
+        --color-silver-mist: #9c9c9c;
+        --color-dark-frost: #222222;
+        --color-slate-border: #565656;
+        --font-primary:
+          "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        --font-mono: var(--font-primary);
+        --grid-line: rgba(249, 249, 249, 0.055);
+        --border-soft: rgba(214, 214, 214, 0.18);
+        --radius-nav: 4px;
+        --radius-cards: 12px;
+        --radius-panel: 8px;
+
+        font-family: var(--font-primary);
+        background: var(--color-midnight-ink);
+        color: var(--color-ghost-ash);
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html {
+        background: var(--color-midnight-ink);
+      }
+
       body {
+        min-width: 320px;
+        min-height: 100vh;
         margin: 0;
-        background: #101113;
+        background:
+          linear-gradient(var(--grid-line) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+          var(--color-midnight-ink);
+        background-size: 32px 32px;
       }
 
       main {
         width: min(860px, calc(100vw - 32px));
         margin: 0 auto;
-        padding: 28px 0 72px;
+        padding: 32px 0 80px;
       }
 
       nav {
+        position: sticky;
+        top: 0;
+        z-index: 3;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        margin-bottom: 68px;
-        font-size: 13px;
+        margin-bottom: 64px;
+        padding: 16px 0;
+        border-bottom: 1px solid var(--border-soft);
+        background: rgba(17, 17, 17, 0.94);
+        backdrop-filter: blur(16px);
+        font-size: 12px;
       }
 
       a {
-        color: #d8f28f;
+        color: var(--color-site-accent);
         text-decoration: none;
       }
 
@@ -52,12 +93,17 @@
         text-decoration: underline;
       }
 
+      a:focus-visible {
+        outline: 2px solid var(--color-site-accent);
+        outline-offset: 2px;
+      }
+
       .wordmark {
         display: inline-flex;
         align-items: center;
         gap: 9px;
-        color: #f4f1ea;
-        font-weight: 800;
+        color: var(--color-ghost-ash);
+        font-weight: 500;
         text-decoration: none;
       }
 
@@ -65,42 +111,47 @@
         display: block;
         width: 28px;
         height: 28px;
-        border-radius: 7px;
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-nav);
+        background: var(--color-shadow-ink);
       }
 
       h1 {
-        max-width: 720px;
+        max-width: 760px;
         margin: 0;
-        font-size: clamp(44px, 8vw, 82px);
-        line-height: 0.96;
+        color: var(--color-ghost-ash);
+        font-size: 64px;
+        font-weight: 500;
+        line-height: 0.9;
         letter-spacing: 0;
       }
 
       .lede {
         max-width: 660px;
-        margin: 18px 0 0;
-        color: #b8c2cf;
-        font-size: 17px;
-        line-height: 1.65;
+        margin: 16px 0 0;
+        color: var(--color-silver-mist);
+        font-size: 16px;
+        line-height: 1.5;
       }
 
       section {
         margin-top: 48px;
-        border-top: 1px solid #30343a;
+        border-top: 1px solid var(--border-soft);
         padding-top: 32px;
       }
 
       h2 {
-        margin: 0 0 14px;
-        color: #a6e3d7;
+        margin: 0 0 16px;
+        color: var(--color-site-accent);
         font-size: 12px;
-        letter-spacing: 0.12em;
+        font-weight: 500;
+        letter-spacing: 0;
         text-transform: uppercase;
       }
 
       p,
       li {
-        color: #cbd1da;
+        color: var(--color-subtle-gray);
         font-size: 15px;
         line-height: 1.65;
       }
@@ -112,32 +163,47 @@
 
       code,
       pre {
-        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-family: var(--font-mono);
+      }
+
+      code {
+        color: var(--color-ghost-ash);
       }
 
       pre {
         overflow-x: auto;
         margin: 12px 0 0;
-        border: 1px solid #30343a;
-        border-radius: 8px;
-        background: #171a1f;
-        color: #f4f1ea;
-        padding: 14px;
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-panel);
+        background: var(--color-dark-frost);
+        color: var(--color-ghost-ash);
+        padding: 16px;
         font-size: 13px;
         line-height: 1.7;
       }
 
       .note {
-        border: 1px solid #45412b;
-        border-radius: 8px;
-        background: #242116;
-        color: #f4e5b0;
-        padding: 14px;
+        border: 1px solid var(--color-slate-border);
+        border-radius: var(--radius-cards);
+        background: var(--color-dark-frost);
+        padding: 16px;
       }
 
       .note p {
         margin: 0;
-        color: #f4e5b0;
+        color: var(--color-subtle-gray);
+      }
+
+      @media (max-width: 640px) {
+        nav {
+          justify-content: flex-start;
+          overflow-x: auto;
+          white-space: nowrap;
+        }
+
+        h1 {
+          font-size: 48px;
+        }
       }
     </style>
   </head>
