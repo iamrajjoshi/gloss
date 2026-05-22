@@ -8,7 +8,6 @@ export interface DraftComment {
   startLine: number;
   endLine: number;
   originalSnippet: string;
-  anchor: { x: number; y: number };
 }
 
 interface ReviewState {

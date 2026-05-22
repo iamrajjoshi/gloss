@@ -1,4 +1,4 @@
-import { MessageSquarePlus, X } from 'lucide-react';
+import { MessageSquarePlus } from 'lucide-react';
 import { useState } from 'react';
 import { useReviewStore } from '../store';
 
@@ -12,22 +12,22 @@ export function CommentPopover() {
     return null;
   }
 
-  const label =
+  const location =
     draft.startLine === draft.endLine
-      ? `Comment on line ${draft.side}${draft.startLine}`
-      : `Comment on range ${draft.side}${Math.min(draft.startLine, draft.endLine)}-${draft.side}${Math.max(draft.startLine, draft.endLine)}`;
+      ? `${draft.side}${draft.startLine}`
+      : `${draft.side}${Math.min(draft.startLine, draft.endLine)}-${draft.side}${Math.max(draft.startLine, draft.endLine)}`;
 
   return (
-    <div className="popover" style={{ left: draft.anchor.x, top: draft.anchor.y }}>
+    <div className="popover" draggable={false}>
       <div className="popover-title">
-        <span>Local comment</span>
-        <button className="icon-button" type="button" title="Close" onClick={() => setDraft(null)}>
-          <X size={15} />
-        </button>
+        <span className="popover-file">{draft.filePath}</span>
+        <span className="popover-location">{location}</span>
       </div>
-      <div className="popover-subtitle">{label}</div>
       <textarea value={body} onChange={(event) => setBody(event.target.value)} />
       <div className="popover-actions">
+        <button className="secondary-button" type="button" onClick={() => setDraft(null)}>
+          Cancel
+        </button>
         <button
           className="primary-button"
           type="button"

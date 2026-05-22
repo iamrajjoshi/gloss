@@ -123,6 +123,7 @@ export function createApp(origin: string): Hono {
 
   app.get('/setup.md', serveRootFile('setup.md', 'text/markdown; charset=utf-8'));
   app.get('/prompt.md', serveRootFile('prompt.md', 'text/markdown; charset=utf-8'));
+  app.get('/logo.svg', serveRootFile('logo.svg', 'image/svg+xml'));
   app.get('/assets/*', serveAsset);
   app.get('/review/:id', serveIndex);
   app.get('/', serveIndex);
