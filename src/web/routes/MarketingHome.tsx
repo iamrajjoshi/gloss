@@ -11,18 +11,14 @@ import {
   Terminal,
   Trash2
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 const installCommand = 'brew install iamrajjoshi/tap/gloss';
 const npmInstallCommand = 'npm install -g getgloss';
-const runCommand = 'gloss open --base HEAD --json';
-const npxCommand = 'npx getgloss open --base HEAD --json';
-const skillInstallCommand =
-  'mkdir -p ~/.claude/skills/gloss && curl -fsSL https://getgloss.dev/skill/SKILL.md -o ~/.claude/skills/gloss/SKILL.md';
-const agentPrompt = 'Install Gloss with Homebrew or npm. Then read https://getgloss.dev/setup.md.';
-const marketingSectionIds = ['install', 'skill', 'workflow', 'contract'] as const;
+const runCommand = 'gloss open --json';
+const npxCommand = 'npx getgloss open --json';
+const skillInstallCommand = 'npx skills add iamrajjoshi/gloss --skill gloss -g -a claude-code';
 
-type MarketingSectionId = (typeof marketingSectionIds)[number];
 type DemoSide = 'L' | 'R';
 
 interface DemoSelection {
@@ -188,10 +184,6 @@ const demoCodeRows: DemoCodeRow[] = [
   }
 ];
 
-function isMarketingSectionId(id: string): id is MarketingSectionId {
-  return marketingSectionIds.some((sectionId) => sectionId === id);
-}
-
 function labelForSelection(selection: DemoSelection): string {
   if (selection.startLine === selection.endLine) {
     return `Comment on line ${selection.side}${selection.startLine}`;
@@ -251,9 +243,23 @@ function HeroDiffScene() {
   const [draft, setDraft] = useState('');
   const [comments, setComments] = useState<DemoComment[]>(seededDemoComments);
   const [submitState, setSubmitState] = useState<'idle' | 'submitted'>('idle');
+  const submitted = submitState === 'submitted';
   const activeComment = comments.find((comment) => comment.id === activeCommentId);
   const selectedLabel = labelForSelection(selectedLine);
   const trimmedDraft = draft.trim();
+  const commentLabel = `${comments.length} review comment${comments.length === 1 ? '' : 's'}`;
+  const terminalLines = submitted
+    ? [
+        { marker: '✓', text: 'review.completed received' },
+        { marker: '→', text: 'reading ~/.gloss/reviews/01KS5/feedback.json' },
+        { marker: '→', text: `applying ${commentLabel}` },
+        { marker: '→', text: 'running pnpm check' }
+      ]
+    : [
+        { marker: '$', text: 'gloss open --json' },
+        { marker: '→', text: 'captured 4 files, +128 -31' },
+        { marker: '→', text: 'waiting for review.completed' }
+      ];
   const visibleDemoRows = expanded
     ? demoCodeRows
     : demoCodeRows.filter((row) => !row.hiddenUntilExpanded);
@@ -284,6 +290,7 @@ function HeroDiffScene() {
     setActiveCommentId(null);
     setDraft('');
     setComposerOpen(true);
+    setSubmitState('idle');
   };
 
   const openComment = (comment: DemoComment) => {
@@ -295,6 +302,7 @@ function HeroDiffScene() {
     setActiveCommentId(comment.id);
     setDraft(comment.body);
     setComposerOpen(true);
+    setSubmitState('idle');
   };
 
   const saveComment = () => {
@@ -372,18 +380,14 @@ function HeroDiffScene() {
         <div className="scene-terminal">
           <div className="terminal-header">
             <Terminal size={14} />
-            <span>agent terminal</span>
+            <span>{submitted ? 'Claude Code' : 'agent terminal'}</span>
           </div>
           <div className="terminal-lines">
-            <p>
-              <span>$</span> gloss open --base HEAD --json
-            </p>
-            <p>
-              <span>→</span> captured 4 files, +128 -31
-            </p>
-            <p>
-              <span>→</span> waiting for review.completed
-            </p>
+            {terminalLines.map((line) => (
+              <p key={line.text}>
+                <span>{line.marker}</span> {line.text}
+              </p>
+            ))}
           </div>
         </div>
 
@@ -410,10 +414,14 @@ function HeroDiffScene() {
             }
 
             const selected = isSelectedLine(row.side, rowLine);
+            const rejectedAfterSubmit =
+              submitted && (row.key === 'skip-review' || row.key === 'skip-status');
+            const appliedAfterSubmit =
+              submitted && ['apply-feedback', 'resolve-threads', 'run-checks'].includes(row.key);
             return (
               <div key={row.key}>
                 <button
-                  className={`scene-row ${row.tone} ${row.hiddenUntilExpanded ? 'dimmed' : ''} ${selected ? 'selected' : ''}`}
+                  className={`scene-row ${row.tone} ${row.hiddenUntilExpanded ? 'dimmed' : ''} ${selected ? 'selected' : ''} ${rejectedAfterSubmit ? 'agent-dimmed' : ''} ${appliedAfterSubmit ? 'agent-applied' : ''}`}
                   type="button"
                   aria-pressed={selected}
                   onClick={() =>
@@ -424,6 +432,12 @@ function HeroDiffScene() {
                   <span>{row.newLine ?? ''}</span>
                   <code>{row.code || ' '}</code>
                 </button>
+                {submitted && row.key === 'apply-feedback' ? (
+                  <div className="scene-applied-status">
+                    <Check size={13} />
+                    <span>applied by Claude Code</span>
+                  </div>
+                ) : null}
                 {renderLineComments(row.side, rowLine)}
                 {composerOpen &&
                 selectedLine.side === row.side &&
@@ -463,11 +477,33 @@ function HeroDiffScene() {
         </div>
 
         <div className="scene-feedback">
-          <div className="feedback-title">
-            <FileJson2 size={15} />
-            <span>.gloss/reviews/01KS5/feedback.json</span>
-          </div>
-          <pre>{feedbackPreview}</pre>
+          {submitted ? (
+            <>
+              <div className="feedback-title">
+                <Terminal size={15} />
+                <span>Claude Code is updating</span>
+              </div>
+              <div className="agent-update-card">
+                <code>~/.gloss/reviews/01KS5/feedback.json</code>
+                <ul>
+                  {['Read feedback', 'Applied comment', 'Validated'].map((item) => (
+                    <li key={item}>
+                      <Check size={13} />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="feedback-title">
+                <FileJson2 size={15} />
+                <span>~/.gloss/reviews/01KS5/feedback.json</span>
+              </div>
+              <pre>{feedbackPreview}</pre>
+            </>
+          )}
         </div>
       </div>
 
@@ -475,8 +511,8 @@ function HeroDiffScene() {
         <span>
           {comments.length === 0
             ? 'No local comments yet'
-            : submitState === 'submitted'
-              ? `${comments.length} saved to feedback.json`
+            : submitted
+              ? 'Sent to Claude Code'
               : `${comments.length} local comment${comments.length === 1 ? '' : 's'} ready`}
         </span>
         <button
@@ -484,8 +520,8 @@ function HeroDiffScene() {
           disabled={comments.length === 0}
           onClick={() => setSubmitState('submitted')}
         >
-          {submitState === 'submitted' ? <Check size={14} /> : <Play size={14} />}
-          {submitState === 'submitted' ? 'Review submitted' : 'Submit review'}
+          {submitted ? <Check size={14} /> : <Play size={14} />}
+          {submitted ? 'Sent to Claude Code' : 'Submit review'}
         </button>
       </div>
     </section>
@@ -496,107 +532,28 @@ function WorkflowStep({ step, title, body }: { step: string; title: string; body
   return (
     <div className="workflow-step">
       <span>{step}</span>
-      <h3>{title}</h3>
-      <p>{body}</p>
+      <div>
+        <h3>{title}</h3>
+        <p>{body}</p>
+      </div>
     </div>
   );
 }
 
-function MarketingNav({ activeSection }: { activeSection: MarketingSectionId | null }) {
-  const navItems: Array<{ id: MarketingSectionId; label: string }> = [
-    { id: 'install', label: 'Install' },
-    { id: 'skill', label: 'Skill' },
-    { id: 'workflow', label: 'Workflow' },
-    { id: 'contract', label: 'Output' }
-  ];
-
-  return (
-    <header className="marketing-nav-shell">
-      <nav className="marketing-nav" aria-label="Gloss site">
-        <a className="marketing-wordmark" href="/">
-          <img className="brand-mark" src="/logo.svg" alt="" aria-hidden="true" />
-          Gloss
-        </a>
-        {navItems.map((item) => {
-          const active = activeSection === item.id;
-          return (
-            <a
-              href={`#${item.id}`}
-              key={item.id}
-              aria-current={active ? 'location' : undefined}
-              data-active={active ? 'true' : undefined}
-            >
-              {item.label}
-            </a>
-          );
-        })}
-        <a href="/setup/">Agent setup</a>
-      </nav>
-    </header>
-  );
-}
-
 export function MarketingHome() {
-  const [activeSection, setActiveSection] = useState<MarketingSectionId | null>(null);
-
-  useEffect(() => {
-    const sections = marketingSectionIds
-      .map((id) => document.getElementById(id))
-      .filter((section): section is HTMLElement => Boolean(section));
-
-    if (sections.length === 0) {
-      return;
-    }
-
-    const updateActiveSection = () => {
-      const navOffset = 96;
-      const nextActive = sections.reduce<MarketingSectionId | null>((active, section) => {
-        const rect = section.getBoundingClientRect();
-        return rect.top <= navOffset && rect.bottom > navOffset && isMarketingSectionId(section.id)
-          ? section.id
-          : active;
-      }, null);
-      const nearPageBottom =
-        window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
-
-      setActiveSection(nearPageBottom ? 'contract' : nextActive);
-    };
-
-    const observer = new IntersectionObserver(
-      () => {
-        updateActiveSection();
-      },
-      {
-        rootMargin: '-96px 0px 0px 0px',
-        threshold: [0, 0.15, 0.5, 1]
-      }
-    );
-
-    for (const section of sections) {
-      observer.observe(section);
-    }
-    updateActiveSection();
-    window.addEventListener('scroll', updateActiveSection, { passive: true });
-    window.addEventListener('resize', updateActiveSection);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('scroll', updateActiveSection);
-      window.removeEventListener('resize', updateActiveSection);
-    };
-  }, []);
-
   return (
     <main className="marketing-page">
-      <MarketingNav activeSection={activeSection} />
       <section className="marketing-hero">
         <div className="hero-copy">
           <div className="hero-copy-main">
+            <div className="hero-logo">
+              <img className="brand-mark" src="/logo-mark.svg" alt="Gloss logo" />
+            </div>
             <h1>Gloss</h1>
             <p className="hero-subtitle">Comment on local diffs before handing the tree back.</p>
             <p className="hero-body">
-              Gloss opens your working-tree diff in a local browser and writes review comments back
-              to `.gloss/reviews` as JSON and Markdown.
+              Gloss opens your working-tree diff in a local browser, then sends review comments back
+              to your agent as JSON and Markdown.
             </p>
             <div className="hero-actions">
               <a className="hero-primary" href="#install">
@@ -629,70 +586,69 @@ export function MarketingHome() {
           <CommandLine command={npxCommand} />
         </div>
         <div className="agent-prompt">
-          <div>
+          <div className="agent-prompt-label">
             <Terminal size={18} />
-            <span>Agent instruction</span>
+            <span>Packaged skill</span>
           </div>
-          <p>{agentPrompt}</p>
-          <CopyButton value={agentPrompt} label="Copy instruction" />
-        </div>
-      </section>
-
-      <section className="marketing-band skill-band" id="skill">
-        <div className="section-heading">
-          <p>Skill</p>
-          <h2>Teach agents where to send feedback.</h2>
-        </div>
-        <div className="skill-layout">
-          <div className="skill-copy">
-            <h2>Claude Code skill</h2>
-            <p>
-              The skill opens Gloss, waits for review submission, reads `feedback.json`, fixes each
-              comment, and runs the narrowest useful validation.
-            </p>
-            <a href="/skill/SKILL.md">View SKILL.md</a>
+          <p>
+            Install the bundled agent skill so Claude Code knows when to open Gloss and how to use
+            the feedback.
+          </p>
+          <div className="agent-prompt-links">
+            <a href="/setup/">Agent setup</a>
           </div>
-          <div className="skill-commands">
-            <CommandLine command={skillInstallCommand} />
-            <CommandLine command="gloss this" />
+          <div className="agent-skill-command">
+            <code>{skillInstallCommand}</code>
+            <CopyButton value={skillInstallCommand} label="Copy install" />
           </div>
         </div>
       </section>
 
       <section className="marketing-band workflow-band" id="workflow">
         <div className="section-heading">
-          <p>Workflow</p>
-          <h2>A local loop for before-PR review.</h2>
+          <p>How it works</p>
         </div>
-        <div className="workflow-grid">
+        <div className="workflow-story">
           <WorkflowStep
             step="01"
-            title="Change code"
-            body="Staged, unstaged, or untracked edits."
+            title="Open a review"
+            body="The agent runs `gloss open --json`."
           />
-          <WorkflowStep step="02" title="Open Gloss" body="Run `gloss open --json --base HEAD`." />
-          <WorkflowStep step="03" title="Comment" body="Line and range comments in the browser." />
-          <WorkflowStep step="04" title="Fix" body="Read `.gloss/reviews/*/feedback.json`." />
+          <WorkflowStep step="02" title="Wait" body="Gloss blocks while you review the diff." />
+          <WorkflowStep step="03" title="Receive feedback" body="The agent reads `feedbackPath`." />
+          <WorkflowStep
+            step="04"
+            title="Fix and validate"
+            body="The agent applies comments and runs checks."
+          />
+          <WorkflowStep step="05" title="Resolve" body="The agent marks the review handled." />
         </div>
       </section>
 
       <section className="marketing-band contract-band" id="contract">
         <div className="section-heading">
           <p>Output</p>
-          <h2>Structured feedback, written into the repo.</h2>
+          <h2>What the agent reads.</h2>
         </div>
         <div className="contract-layout">
-          <pre>{`<repo>/.gloss/reviews/<reviewId>/
-  meta.json
-  diff.json
-  feedback.json
-  feedback.md`}</pre>
+          <pre>{`~/.gloss/reviews/<reviewId>/feedback.json
+~/.gloss/reviews/<reviewId>/feedback.md
+~/.gloss/reviews/<reviewId>/resolved.json`}</pre>
           <div className="contract-copy">
-            <p>`feedback.json` is for agents. `feedback.md` is for humans.</p>
-            <p>`gloss mcp` exposes review, watch, feedback, and resolve tools.</p>
+            <p>
+              <code>feedback.json</code> is the machine-readable handoff; <code>feedback.md</code>{' '}
+              is the human-readable copy.
+            </p>
           </div>
         </div>
       </section>
+
+      <footer className="marketing-footer">
+        <a href="https://github.com/iamrajjoshi/gloss" target="_blank" rel="noreferrer">
+          <GitBranch size={16} />
+          <span>GitHub</span>
+        </a>
+      </footer>
     </main>
   );
 }

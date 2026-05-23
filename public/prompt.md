@@ -36,8 +36,8 @@ gloss open --json --no-watch
 Gloss feedback is stored under:
 
 ```text
-<repo>/.gloss/reviews/<reviewId>/feedback.json
-<repo>/.gloss/reviews/<reviewId>/feedback.md
+~/.gloss/reviews/<reviewId>/feedback.json
+~/.gloss/reviews/<reviewId>/feedback.md
 ```
 
 Use `feedback.json` for structured agent work. Use `feedback.md` when a human

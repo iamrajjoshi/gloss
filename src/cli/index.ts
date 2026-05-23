@@ -2,7 +2,12 @@
 import { Command } from 'commander';
 import openBrowser from 'open';
 import { startMcpServer } from '../mcp/index';
-import { packageVersion } from '../shared/paths';
+import {
+  globalReviewDir,
+  globalReviewFeedbackFile,
+  globalReviewMarkdownFile,
+  packageVersion
+} from '../shared/paths';
 import { assertGitAvailable, captureDiff, getRepoRoot } from './git';
 import {
   ensureServer,
@@ -13,6 +18,7 @@ import {
   stopServer
 } from './lifecycle';
 import { ServerClient } from './server-client';
+import { listReviewsForStatus } from './status';
 
 interface GlobalOptions {
   json?: boolean;
@@ -66,7 +72,13 @@ program
       }
 
       if (options.watch === false) {
-        const result = { reviewId: meta.id, url, files: diff.files.length, scope: diff.scope.mode };
+        const result = {
+          reviewId: meta.id,
+          url,
+          files: diff.files.length,
+          scope: diff.scope.mode,
+          artifactDir: meta.artifactDir
+        };
         globals.json ? printJson(result) : printPlain(`Review ${meta.id}: ${url}`);
         return;
       }
@@ -87,8 +99,9 @@ program
         url,
         files: event.counts.files,
         comments: event.counts.comments,
-        feedbackPath: `${diff.cwd}/.gloss/reviews/${meta.id}/feedback.json`,
-        markdownPath: `${diff.cwd}/.gloss/reviews/${meta.id}/feedback.md`,
+        feedbackPath: globalReviewFeedbackFile(meta.id),
+        markdownPath: globalReviewMarkdownFile(meta.id),
+        artifactDir: globalReviewDir(meta.id),
         feedback
       };
       globals.json
@@ -129,10 +142,7 @@ program
     const globals = program.opts<GlobalOptions>();
     const info = await readServerInfo();
     const responsive = info ? await isServerResponsive(info) : false;
-    let reviews: unknown[] = [];
-    if (info && responsive) {
-      reviews = (await new ServerClient(serverUrl(info)).listReviews()).reviews;
-    }
+    const reviews = await listReviewsForStatus({ responsive, server: info });
     const status = { running: responsive, server: info, reviews };
     globals.json
       ? printJson(status)

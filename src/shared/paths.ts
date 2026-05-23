@@ -31,16 +31,32 @@ export function globalServerLogFile(): string {
   return path.join(globalLogDir(), 'server.log');
 }
 
-export function repoGlossDir(cwd: string): string {
-  return path.join(cwd, '.gloss');
+export function globalReviewsDir(): string {
+  return path.join(globalStateDir(), 'reviews');
 }
 
-export function reviewsDir(cwd: string): string {
-  return path.join(repoGlossDir(cwd), 'reviews');
+export function globalReviewDir(reviewId: string): string {
+  return path.join(globalReviewsDir(), reviewId);
 }
 
-export function reviewDir(cwd: string, reviewId: string): string {
-  return path.join(reviewsDir(cwd), reviewId);
+export function globalReviewMetaFile(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'meta.json');
+}
+
+export function globalReviewDiffFile(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'diff.json');
+}
+
+export function globalReviewFeedbackFile(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'feedback.json');
+}
+
+export function globalReviewMarkdownFile(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'feedback.md');
+}
+
+export function globalReviewResolvedFile(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'resolved.json');
 }
 
 export async function ensureDir(dir: string): Promise<void> {

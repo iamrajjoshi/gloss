@@ -1,6 +1,6 @@
 export type Side = 'L' | 'R';
 
-export type ReviewStatus = 'pending' | 'completed' | 'cancelled';
+export type ReviewStatus = 'pending' | 'completed' | 'cancelled' | 'resolved';
 
 export interface Comment {
   id: string;
@@ -86,6 +86,10 @@ export interface ReviewMeta {
   status: ReviewStatus;
   createdAt: string;
   completedAt?: string;
+  resolvedAt?: string;
+  artifactDir: string;
+  feedbackPath?: string;
+  markdownPath?: string;
 }
 
 export interface FeedbackBundle {
@@ -127,4 +131,5 @@ export interface OpenResult {
   comments?: number;
   feedbackPath?: string;
   markdownPath?: string;
+  artifactDir?: string;
 }
