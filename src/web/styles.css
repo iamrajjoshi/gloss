@@ -1206,6 +1206,28 @@ pre {
   background: var(--ide-bg);
 }
 
+.demo-interaction-hint {
+  display: flex;
+  width: min(var(--marketing-max), calc(100vw - 40px));
+  align-items: center;
+  gap: var(--spacing-8);
+  margin: 0 auto var(--spacing-16);
+  border-left: 2px solid var(--accent);
+  padding-left: var(--spacing-16);
+  color: var(--color-subtle-gray);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.demo-interaction-hint svg,
+.demo-interaction-hint strong {
+  color: var(--accent);
+}
+
+.demo-interaction-hint strong {
+  font-weight: var(--font-weight-medium);
+}
+
 .scene-topbar,
 .scene-shell,
 .scene-submit {
@@ -1918,7 +1940,8 @@ pre {
 
 @media (max-width: 980px) {
   .hero-copy,
-  .hero-scene {
+  .hero-scene,
+  .demo-interaction-hint {
     width: min(720px, calc(100vw - 32px));
   }
 
@@ -2039,7 +2062,8 @@ pre {
   }
 
   .hero-copy,
-  .hero-scene {
+  .hero-scene,
+  .demo-interaction-hint {
     width: calc(100vw - 28px);
   }
 
@@ -2069,6 +2093,11 @@ pre {
 
   .hero-quickstart {
     max-width: none;
+  }
+
+  .demo-interaction-hint {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .scene-meta,

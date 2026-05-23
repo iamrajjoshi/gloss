@@ -550,10 +550,10 @@ export function MarketingHome() {
               <img className="brand-mark" src="/logo-mark.svg" alt="Gloss logo" />
             </div>
             <h1>Gloss</h1>
-            <p className="hero-subtitle">Comment on local diffs before handing the tree back.</p>
+            <p className="hero-subtitle">Review agent-written diffs in your browser.</p>
             <p className="hero-body">
-              Gloss opens your working-tree diff in a local browser, then sends review comments back
-              to your agent as JSON and Markdown.
+              Gloss opens your working-tree diff in a local browser, then writes{' '}
+              <code>feedback.json</code> for your agent and <code>feedback.md</code> for humans.
             </p>
             <div className="hero-actions">
               <a className="hero-primary" href="#install">
@@ -570,6 +570,13 @@ export function MarketingHome() {
             <code>{npxCommand}</code>
             <CopyButton value={npxCommand} label="Copy command" />
           </aside>
+        </div>
+        <div className="demo-interaction-hint">
+          <MessageSquare size={16} />
+          <span>
+            <strong>Try it now:</strong> Click a changed line to leave a comment, then submit the
+            review.
+          </span>
         </div>
         <HeroDiffScene />
       </section>
