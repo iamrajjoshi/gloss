@@ -6,8 +6,8 @@
 
 Gloss is a local browser review loop for coding agents. It captures your current
 git diff, opens a localhost review UI, lets you attach comments to changed
-lines or ranges, and writes structured feedback back into the repo for an
-agent to re-ingest.
+lines or ranges, and writes structured feedback under `~/.gloss` for an agent
+to re-ingest.
 
 ## Install
 
@@ -37,8 +37,8 @@ Install Gloss with Homebrew or npm. Then read https://getgloss.dev/setup.md.
 
 ### Claude Code Skill
 
-Gloss ships a Claude Code skill at `skill/SKILL.md`. Install it with the
-[`skills` CLI](https://github.com/vercel-labs/agent-skills):
+Gloss ships a packaged Claude Code skill at `skill/SKILL.md`. Install it with
+the [`skills` CLI](https://github.com/vercel-labs/agent-skills):
 
 ```bash
 # Global (available across all projects)
@@ -49,7 +49,10 @@ npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
 ```
 
 `-g` installs to `~/.claude/skills/`, `-a claude-code` targets Claude Code, and
-`--skill gloss` installs only the Gloss skill from the repo.
+`--skill gloss` installs only the Gloss skill folder from the repo. The skill
+teaches agents to run `gloss open --json`, wait for browser submission, read
+`feedbackPath`, apply comments, validate, and mark the review resolved when MCP
+tools are available.
 
 The hosted install script remains npm-only:
 
@@ -85,16 +88,17 @@ keeps the old behavior and does not fall back to a branch diff.
 Completed reviews are written to:
 
 ```text
-<repo>/.gloss/reviews/<reviewId>/
+~/.gloss/reviews/<reviewId>/
   meta.json
   diff.json
   feedback.json
   feedback.md
-  original/
+  resolved.json
 ```
 
 `feedback.json` is the machine-readable payload. `feedback.md` is a readable
-summary ordered by file and line.
+summary ordered by file and line. Set `GLOSS_STATE_DIR` to use an isolated
+state root for tests or development.
 
 ## MCP
 

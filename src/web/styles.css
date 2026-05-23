@@ -1000,6 +1000,7 @@ pre {
 
 .setup-section pre {
   overflow-x: auto;
+  overflow-wrap: anywhere;
   margin: 12px 0 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-panel);
@@ -1008,6 +1009,7 @@ pre {
   padding: var(--spacing-16);
   font-size: 13px;
   line-height: 1.7;
+  white-space: pre-wrap;
 }
 
 .setup-section code {
@@ -1033,15 +1035,13 @@ pre {
 
 .marketing-page {
   --marketing-max: var(--page-max-width);
-  --marketing-nav-height: 60px;
 
   min-height: 100vh;
-  padding-top: var(--marketing-nav-height);
   background: var(--surface-dark);
 }
 
 .marketing-hero {
-  min-height: calc(100vh - var(--marketing-nav-height));
+  min-height: 100vh;
   border-bottom: 1px solid var(--border-soft);
   background:
     linear-gradient(to bottom, transparent 68%, var(--surface-dark) 100%),
@@ -1052,47 +1052,6 @@ pre {
     32px 32px,
     32px 32px;
   padding-bottom: var(--spacing-64);
-}
-
-.marketing-nav-shell {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  border-bottom: 1px solid var(--border-soft);
-  background: rgba(17, 17, 17, 0.94);
-  backdrop-filter: blur(16px);
-}
-
-.marketing-nav {
-  display: flex;
-  width: min(var(--marketing-max), calc(100vw - 40px));
-  min-height: var(--marketing-nav-height);
-  margin: 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--spacing-16);
-  font-size: var(--text-small);
-}
-
-.marketing-nav a {
-  color: var(--text-primary);
-  outline-offset: 5px;
-  text-decoration: none;
-}
-
-.marketing-nav a:hover {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 8px;
-}
-
-.marketing-nav a[data-active="true"] {
-  color: var(--accent);
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 8px;
 }
 
 .marketing-wordmark {
@@ -1122,6 +1081,16 @@ pre {
 
 .hero-copy-main {
   min-width: 0;
+}
+
+.hero-logo {
+  display: inline-flex;
+  margin-bottom: var(--spacing-32);
+}
+
+.hero-logo .brand-mark {
+  width: 76px;
+  height: 76px;
 }
 
 .hero-kicker,
@@ -1442,6 +1411,26 @@ pre {
   color: var(--ide-fg-muted);
 }
 
+.scene-row.agent-dimmed {
+  opacity: 0.5;
+}
+
+.scene-row.agent-applied {
+  outline: 1px solid color-mix(in srgb, var(--ide-success) 42%, transparent);
+  outline-offset: -1px;
+}
+
+.scene-applied-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 12px 4px 112px;
+  border-left: 2px solid var(--ide-success);
+  color: var(--ide-success);
+  font-size: var(--text-small);
+  padding: 4px 0 4px 10px;
+}
+
 .scene-inline-comment {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1616,6 +1605,50 @@ pre {
   white-space: pre-wrap;
 }
 
+.agent-update-card {
+  display: grid;
+  align-content: start;
+  gap: var(--spacing-16);
+  min-height: 0;
+  border: 1px solid rgba(240, 246, 252, 0.08);
+  border-radius: var(--radius-nav);
+  background: var(--ide-bg);
+  color: var(--ide-fg-muted);
+  padding: 12px;
+}
+
+.agent-update-card code {
+  display: block;
+  overflow: hidden;
+  color: var(--ide-fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-update-card ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-update-card li {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  color: var(--ide-fg);
+  font-size: 13px;
+  list-style: none;
+}
+
+.agent-update-card li svg {
+  color: var(--ide-success);
+  flex: 0 0 auto;
+}
+
 .scene-submit {
   display: flex;
   align-items: center;
@@ -1631,7 +1664,7 @@ pre {
 .marketing-band {
   border-bottom: 1px solid var(--border-soft);
   padding: var(--spacing-80) max(20px, calc((100vw - var(--marketing-max)) / 2));
-  scroll-margin-top: calc(var(--marketing-nav-height) + var(--spacing-24));
+  scroll-margin-top: var(--spacing-24);
 }
 
 .section-heading {
@@ -1701,51 +1734,112 @@ pre {
 
 .agent-prompt {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--spacing-16);
   margin-top: var(--spacing-24);
   border-left: 2px solid var(--accent);
-  padding-left: var(--spacing-16);
+  padding: 2px 0 2px var(--spacing-16);
 }
 
-.agent-prompt div {
+.agent-prompt-label,
+.agent-prompt-links {
   display: flex;
   align-items: center;
   gap: var(--spacing-8);
+}
+
+.agent-prompt-label {
   color: var(--accent);
   font-size: 13px;
   font-weight: var(--font-weight-medium);
 }
 
 .agent-prompt p {
-  grid-column: 1 / -1;
   margin: 0;
   color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.55;
 }
 
-.workflow-grid {
+.agent-skill-command {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+  padding: 10px 12px;
+}
+
+.agent-skill-command code {
+  overflow: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.agent-prompt pre {
+  grid-column: 1 / -2;
+  overflow-x: auto;
+  margin: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.agent-prompt > .marketing-copy {
+  align-self: start;
+  justify-self: end;
+}
+
+.agent-prompt code,
+.contract-copy code {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.agent-prompt-links {
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.agent-prompt-links a {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.agent-prompt-links a:hover {
+  text-decoration: underline;
+}
+
+.workflow-story {
+  display: grid;
   gap: 0;
   margin-top: var(--spacing-32);
   border-top: 1px solid var(--border-soft);
 }
 
 .workflow-step {
-  min-height: 150px;
-  border-right: 1px solid var(--border-soft);
-  padding: var(--spacing-16) var(--spacing-16) var(--spacing-16) 0;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--spacing-24);
+  border-bottom: 1px solid var(--border-soft);
+  padding: var(--spacing-24) 0;
 }
 
 .workflow-step:last-child {
-  border-right: 0;
-}
-
-.workflow-step + .workflow-step {
-  padding-left: var(--spacing-16);
+  border-bottom: 0;
 }
 
 .workflow-step span {
@@ -1755,36 +1849,6 @@ pre {
 }
 
 .workflow-step h3 {
-  margin: var(--spacing-32) 0 0;
-  color: var(--text-primary);
-  font-size: var(--text-subheading);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: 0;
-}
-
-.workflow-step p,
-.skill-copy p,
-.contract-copy p {
-  color: var(--color-subtle-gray);
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.skill-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.56fr) minmax(0, 1fr);
-  gap: var(--spacing-24);
-  margin-top: var(--spacing-32);
-  align-items: start;
-  border-top: 1px solid var(--border-soft);
-  padding-top: var(--spacing-24);
-}
-
-.skill-copy {
-  padding-right: var(--spacing-16);
-}
-
-.skill-copy h2 {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--text-subheading);
@@ -1792,34 +1856,22 @@ pre {
   letter-spacing: 0;
 }
 
-.skill-copy p {
-  margin: 12px 0 0;
-}
-
-.skill-copy a {
-  display: inline-flex;
-  margin-top: var(--spacing-16);
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: var(--font-weight-medium);
-  text-decoration: none;
-}
-
-.skill-copy a:hover {
-  text-decoration: underline;
-}
-
-.skill-commands {
-  display: grid;
-  gap: 0;
+.workflow-step p,
+.contract-copy p {
+  margin: 6px 0 0;
+  color: var(--color-subtle-gray);
+  font-size: 14px;
+  line-height: 1.65;
 }
 
 .contract-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.7fr);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.62fr);
   gap: var(--spacing-24);
   margin-top: var(--spacing-32);
-  align-items: start;
+  align-items: center;
+  border-top: 1px solid var(--border-soft);
+  padding-top: var(--spacing-24);
 }
 
 .contract-layout pre {
@@ -1834,8 +1886,7 @@ pre {
 }
 
 .contract-copy {
-  display: grid;
-  gap: 12px;
+  max-width: 460px;
 }
 
 .contract-copy p {
@@ -1844,8 +1895,28 @@ pre {
   padding-left: 12px;
 }
 
+.marketing-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--spacing-32) max(20px, calc((100vw - var(--marketing-max)) / 2));
+}
+
+.marketing-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.marketing-footer a:hover {
+  text-decoration: underline;
+  text-underline-offset: 6px;
+}
+
 @media (max-width: 980px) {
-  .marketing-nav,
   .hero-copy,
   .hero-scene {
     width: min(720px, calc(100vw - 32px));
@@ -1893,8 +1964,6 @@ pre {
     justify-content: space-between;
   }
 
-  .workflow-grid,
-  .skill-layout,
   .contract-layout {
     grid-template-columns: 1fr;
   }
@@ -1958,16 +2027,11 @@ pre {
 }
 
 @media (max-width: 640px) {
-  .marketing-nav,
   .setup-nav {
     justify-content: flex-start;
     gap: 14px;
     overflow-x: auto;
     white-space: nowrap;
-  }
-
-  .marketing-nav {
-    width: calc(100vw - 28px);
   }
 
   .marketing-wordmark {
@@ -1986,6 +2050,11 @@ pre {
   .hero-copy h1,
   .setup-header h1 {
     font-size: 48px;
+  }
+
+  .hero-logo .brand-mark {
+    width: 58px;
+    height: 58px;
   }
 
   .hero-subtitle,
@@ -2038,17 +2107,28 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .workflow-grid,
-  .skill-layout {
-    border-top: 1px solid var(--border-soft);
+  .agent-prompt-links {
+    justify-content: flex-start;
   }
 
-  .workflow-step,
-  .workflow-step + .workflow-step {
-    border-right: 0;
-    border-bottom: 1px solid var(--border-soft);
-    padding-right: 0;
-    padding-left: 0;
+  .agent-prompt pre,
+  .agent-skill-command,
+  .agent-prompt > .marketing-copy {
+    grid-column: auto;
+    justify-self: stretch;
+  }
+
+  .agent-skill-command {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-skill-command .marketing-copy {
+    justify-self: stretch;
+  }
+
+  .workflow-step {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-8);
   }
 
   .workflow-step:last-child {
@@ -2057,5 +2137,10 @@ pre {
 
   .marketing-band {
     padding: var(--spacing-64) var(--spacing-16);
+  }
+
+  .marketing-footer {
+    justify-content: center;
+    padding: var(--spacing-32) var(--spacing-16);
   }
 }

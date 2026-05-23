@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="28 48 200 160" role="img" aria-labelledby="title desc">
+  <title id="title">Gloss mark</title>
+  <desc id="desc">Red and green diff hunks without an enclosing frame.</desc>
+  <rect x="36" y="56" width="150" height="72" rx="26" fill="#4B1F26" />
+  <rect x="36.5" y="56.5" width="149" height="71" rx="25.5" fill="none" stroke="#EF8A8C" stroke-opacity="0.45" />
+  <rect x="70" y="128" width="150" height="72" rx="26" fill="#183C2B" />
+  <rect x="70.5" y="128.5" width="149" height="71" rx="25.5" fill="none" stroke="#74D59A" stroke-opacity="0.5" />
+  <path d="M68 92H118" fill="none" stroke="#F4F1EA" stroke-width="16" stroke-linecap="round" />
+  <path d="M103 164H153M128 139V189" fill="none" stroke="#F4F1EA" stroke-width="16" stroke-linecap="round" />
+  <path d="M154 92H164" fill="none" stroke="#EF8A8C" stroke-width="16" stroke-linecap="round" />
+  <path d="M187 164H197" fill="none" stroke="#74D59A" stroke-width="16" stroke-linecap="round" />
+</svg>

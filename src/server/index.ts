@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { packageVersion, reviewDir } from '../shared/paths';
+import { globalReviewDir, packageVersion } from '../shared/paths';
 import type { Comment, DiffPayload, ReviewEvent } from '../shared/types';
 import { reviewStore } from './store';
 
@@ -23,15 +23,16 @@ const mimeTypes: Record<string, string> = {
 export function createApp(origin: string): Hono {
   const app = new Hono();
 
-  app.get('/api/health', (c) =>
-    c.json({
+  app.get('/api/health', async (c) => {
+    const reviews = await reviewStore.list();
+    return c.json({
       ok: true,
       version: packageVersion,
-      activeReviews: reviewStore.list().length
-    })
-  );
+      activeReviews: reviews.filter((review) => review.status === 'pending').length
+    });
+  });
 
-  app.get('/api/reviews', (c) => c.json({ reviews: reviewStore.list() }));
+  app.get('/api/reviews', async (c) => c.json({ reviews: await reviewStore.list() }));
 
   app.post('/api/reviews', async (c) => {
     const diff = (await c.req.json()) as DiffPayload;
@@ -75,7 +76,10 @@ export function createApp(origin: string): Hono {
         };
         cleanup = reviewStore.subscribe(id, send);
         send({ type: 'review.opened', reviewId: id });
-        if (record.meta.status === 'completed' && record.feedback) {
+        if (
+          (record.meta.status === 'completed' || record.meta.status === 'resolved') &&
+          record.feedback
+        ) {
           send({
             type: 'review.completed',
             reviewId: id,
@@ -112,6 +116,7 @@ export function createApp(origin: string): Hono {
       url: `${origin}/review/${id}`,
       files: record.diff.files.length,
       comments: body.comments?.length ?? 0,
+      artifactDir: record.meta.artifactDir,
       feedbackPath,
       markdownPath
     });
@@ -124,11 +129,11 @@ export function createApp(origin: string): Hono {
   });
 
   app.get('/logo.svg', serveRootFile('logo.svg', mimeTypes['.svg']));
+  app.get('/logo-mark.svg', serveRootFile('logo-mark.svg', mimeTypes['.svg']));
   app.get('/og.png', serveRootFile('og.png', mimeTypes['.png']));
   app.get('/install.sh', serveRootFile('install.sh', mimeTypes['.sh']));
   app.get('/setup.md', serveRootFile('setup.md', 'text/markdown; charset=utf-8'));
   app.get('/prompt.md', serveRootFile('prompt.md', 'text/markdown; charset=utf-8'));
-  app.get('/skill/SKILL.md', serveRootFile('skill/SKILL.md', 'text/markdown; charset=utf-8'));
   app.get('/assets/*', serveAsset);
   app.get('/setup', serveIndex);
   app.get('/setup/', serveIndex);
@@ -178,6 +183,6 @@ function serveRootFile(fileName: string, contentType: string) {
   };
 }
 
-export function getReviewArtifactDir(cwd: string, reviewId: string): string {
-  return reviewDir(cwd, reviewId);
+export function getReviewArtifactDir(_cwd: string, reviewId: string): string {
+  return globalReviewDir(reviewId);
 }

@@ -1,3 +1,11 @@
+const skillInstallCommand = 'npx skills add iamrajjoshi/gloss --skill gloss -g -a claude-code';
+const skillWorkflow = `1. Run gloss open --json from the repo root unless the user names a base ref.
+2. Wait for the browser review to be submitted.
+3. Read feedbackPath from the JSON output.
+4. Address each comment in file and line order.
+5. Validate the fix with the narrowest relevant checks.
+6. Mark the review resolved with MCP tools when available, then summarize what changed.`;
+
 export function SetupPage() {
   return (
     <main className="setup-page">
@@ -32,13 +40,13 @@ export function SetupPage() {
 
       <section className="setup-section">
         <h2>Claude Code Skill</h2>
-        <p>Install the optional skill when you want `/gloss`-style behavior in Claude Code.</p>
-        <pre>{`mkdir -p ~/.claude/skills/gloss
-curl -fsSL https://getgloss.dev/skill/SKILL.md -o ~/.claude/skills/gloss/SKILL.md`}</pre>
         <p>
-          The skill runs <code>gloss open --json --base HEAD</code>, waits for submission, reads the
-          feedback file, fixes comments, and validates the change.
+          Gloss ships a packaged skill at <code>skill/SKILL.md</code>. Install it when you want
+          Claude Code to know when and how to use Gloss.
         </p>
+        <pre>{skillInstallCommand}</pre>
+        <p>The skill pairs the CLI with the browser app:</p>
+        <pre>{skillWorkflow}</pre>
       </section>
 
       <section className="setup-section">
@@ -60,10 +68,10 @@ curl -fsSL https://getgloss.dev/skill/SKILL.md -o ~/.claude/skills/gloss/SKILL.m
 
       <section className="setup-section">
         <h2>Use</h2>
-        <pre>gloss open --json --base HEAD</pre>
+        <pre>gloss open --json</pre>
         <p>
           Leave the command running. Gloss exits after the browser review is submitted and writes
-          feedback under <code>.gloss/reviews/&lt;reviewId&gt;/</code>.
+          feedback under <code>~/.gloss/reviews/&lt;reviewId&gt;/</code>.
         </p>
       </section>
 

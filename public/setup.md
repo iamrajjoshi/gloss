@@ -5,7 +5,7 @@ coding-agent loops.
 
 Gloss captures the current git diff, opens a localhost browser review UI, lets
 the user attach comments to changed lines and ranges, then writes structured
-feedback to `.gloss/reviews/<reviewId>/feedback.json` and `feedback.md`.
+feedback to `~/.gloss/reviews/<reviewId>/feedback.json` and `feedback.md`.
 
 ## Check Installation
 
@@ -32,9 +32,9 @@ installing a global package.
 
 ## Install the Claude Code Skill
 
-Gloss ships a Claude Code skill in the repository at `skill/SKILL.md`. If the
-user wants Claude Code to know when to use Gloss automatically, install it with
-the `skills` CLI:
+Gloss ships a packaged Claude Code skill at `skill/SKILL.md`. If the user wants
+Claude Code to know when to use Gloss automatically, install it with the
+`skills` CLI:
 
 ```bash
 # Global (available across all projects)
@@ -47,6 +47,16 @@ npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
 Use the global install for a cross-project review workflow. Use the
 project-local install only when the user wants Gloss behavior scoped to the
 current repo.
+
+The skill pairs the CLI with the browser app:
+
+1. Run `gloss open --json` from the repo root unless the user names a base ref.
+2. Wait for the browser review to be submitted.
+3. Read `feedbackPath` from the JSON output.
+4. Address each comment in file and line order.
+5. Validate the fix with the narrowest relevant checks.
+6. Mark the review resolved with MCP tools when available, then summarize what
+   changed.
 
 ## Update Your Persistent Instructions
 
