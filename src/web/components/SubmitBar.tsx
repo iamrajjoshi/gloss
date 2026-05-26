@@ -3,7 +3,13 @@ import { useState } from 'react';
 import { submitReview } from '../api';
 import { useReviewStore } from '../store';
 
-export function SubmitBar({ reviewId }: { reviewId: string }) {
+export function SubmitBar({
+  reviewId,
+  onSubmitted
+}: {
+  reviewId: string;
+  onSubmitted?: () => Promise<void> | void;
+}) {
   const comments = useReviewStore((state) => state.comments);
   const removeComment = useReviewStore((state) => state.removeComment);
   const [state, setState] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle');
@@ -47,6 +53,11 @@ export function SubmitBar({ reviewId }: { reviewId: string }) {
               await submitReview(reviewId, comments);
               setState('done');
               setMessage('Submitted');
+              try {
+                await onSubmitted?.();
+              } catch {
+                // The feedback handoff succeeded; leave the submitted state visible even if refresh fails.
+              }
             } catch (error) {
               setState('error');
               setMessage(error instanceof Error ? error.message : String(error));
