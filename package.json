@@ -42,7 +42,6 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "ulid": "^3.0.0",
-    "zod": "^4.4.3",
     "zustand": "^5.0.5"
   },
   "devDependencies": {
@@ -51,7 +50,6 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.5.2",
-    "playwright": "^1.52.0",
     "tsup": "^8.5.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",

@@ -21,7 +21,8 @@ import type {
   ResolveResult,
   ReviewEvent,
   ReviewMeta,
-  ReviewRecord
+  ReviewRecord,
+  ReviewUpdateReason
 } from '../shared/types';
 
 type Listener = (event: ReviewEvent) => void;
@@ -149,7 +150,7 @@ export class ReviewStore {
       comments
     };
     record.meta = { ...record.meta, status: 'resolved', resolvedAt };
-    return this.persistResolution(record, resolution);
+    return this.persistResolution(record, resolution, 'review-resolved');
   }
 
   async resolveComment(id: string, commentId: string, summary?: string): Promise<ResolveResult> {
@@ -188,7 +189,7 @@ export class ReviewStore {
     record.meta = fullyResolved
       ? { ...record.meta, status: 'resolved', resolvedAt }
       : { ...record.meta, status: 'submitted', resolvedAt: undefined };
-    return this.persistResolution(record, resolution);
+    return this.persistResolution(record, resolution, 'comment-resolved');
   }
 
   async reopenComment(id: string, commentId: string): Promise<ResolveResult> {
@@ -216,7 +217,7 @@ export class ReviewStore {
     record.meta = fullyResolved
       ? { ...record.meta, status: 'resolved', resolvedAt: resolvedAt ?? undefined }
       : { ...record.meta, status: 'submitted', resolvedAt: undefined };
-    return this.persistResolution(record, resolution);
+    return this.persistResolution(record, resolution, 'comment-reopened');
   }
 
   subscribe(reviewId: string, listener: Listener): () => void {
@@ -336,7 +337,8 @@ export class ReviewStore {
 
   private async persistResolution(
     record: ReviewRecord & { feedback: FeedbackBundle },
-    resolution: ResolutionBundle
+    resolution: ResolutionBundle,
+    reason: ReviewUpdateReason
   ): Promise<ResolveResult> {
     record.resolution = resolution;
     this.reviews.set(record.meta.id, record);
@@ -346,7 +348,7 @@ export class ReviewStore {
       writeFile(resolvedPath, `${JSON.stringify(resolution, null, 2)}\n`),
       writeFile(globalReviewMetaFile(record.meta.id), `${JSON.stringify(record.meta, null, 2)}\n`)
     ]);
-    return {
+    const result: ResolveResult = {
       ok: true,
       reviewId: record.meta.id,
       status: record.meta.status,
@@ -355,6 +357,15 @@ export class ReviewStore {
       path: resolvedPath,
       resolution
     };
+    this.emit({
+      type: 'review.updated',
+      reviewId: record.meta.id,
+      reason,
+      status: result.status,
+      resolutionStatus: result.resolutionStatus,
+      counts: result.comments
+    });
+    return result;
   }
 
   private sortResolvedComments(

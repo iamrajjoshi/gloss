@@ -1,6 +1,6 @@
 import { CheckCircle2, GitBranch, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import type { ReviewRecord } from '../../shared/types';
+import type { ReviewEvent, ReviewRecord } from '../../shared/types';
 import { fetchReview } from '../api';
 import { DiffView } from '../components/DiffView';
 import { SubmitBar } from '../components/SubmitBar';
@@ -46,6 +46,22 @@ export function Review({ reviewId }: { reviewId: string }) {
       cancelled = true;
     };
   }, [reviewId, reset, applyRecord]);
+
+  useEffect(() => {
+    const events = new EventSource(`/api/reviews/${reviewId}/events`);
+    events.onmessage = (message) => {
+      const event = JSON.parse(message.data) as ReviewEvent;
+      if (event.type === 'review.submitted' || event.type === 'review.updated') {
+        reloadReview().catch((reason) => {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        });
+      }
+    };
+
+    return () => {
+      events.close();
+    };
+  }, [reviewId, reloadReview]);
 
   if (error) {
     return (

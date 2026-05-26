@@ -13,6 +13,7 @@ import type {
   DiffPayload,
   OpenResult,
   ResolveResult,
+  ReviewEvent,
   ReviewMeta,
   ReviewRecord
 } from '../shared/types';
@@ -75,12 +76,14 @@ describe('Gloss review API global persistence', () => {
     const listResponse = await reloadedApp.request('/api/reviews');
     const list = (await listResponse.json()) as { reviews: ReviewMeta[] };
     const eventsResponse = await reloadedApp.request(`/api/reviews/${created.meta.id}/events`);
-    const eventsText = await eventsResponse.text();
+    const events = await readReviewEvents(eventsResponse, 2);
 
     expect(list.reviews.map((review) => review.id)).toEqual([created.meta.id]);
     expect(list.reviews[0]?.status).toBe('submitted');
-    expect(eventsText).toContain('"type":"review.submitted"');
-    expect(eventsText).toContain(`"reviewId":"${created.meta.id}"`);
+    expect(events).toMatchObject([
+      { type: 'review.opened', reviewId: created.meta.id },
+      { type: 'review.submitted', reviewId: created.meta.id }
+    ]);
   });
 
   it('rejects submitting a submitted or resolved review', async () => {
@@ -200,6 +203,70 @@ describe('Gloss review API global persistence', () => {
     });
   });
 
+  it('keeps live review events open and emits updates for resolution changes', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeDiff(repoRoot))
+    });
+    const created = (await createdResponse.json()) as {
+      meta: ReviewMeta;
+      url: string;
+    };
+
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment('comment-1'), makeComment('comment-2')] })
+    });
+
+    const eventsResponse = await app.request(`/api/reviews/${created.meta.id}/events`);
+    const updates = readReviewUpdatedEvents(eventsResponse, 3);
+
+    await app.request(`/api/reviews/${created.meta.id}/resolved`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ summary: 'fixed all comments' })
+    });
+    await app.request(`/api/reviews/${created.meta.id}/comments/comment-1/resolved`, {
+      method: 'DELETE'
+    });
+    await app.request(`/api/reviews/${created.meta.id}/comments/comment-1/resolved`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ summary: 'fixed first comment again' })
+    });
+
+    await expect(updates).resolves.toMatchObject([
+      {
+        type: 'review.updated',
+        reviewId: created.meta.id,
+        reason: 'review-resolved',
+        status: 'resolved',
+        resolutionStatus: 'resolved',
+        counts: { total: 2, resolved: 2, open: 0 }
+      },
+      {
+        type: 'review.updated',
+        reviewId: created.meta.id,
+        reason: 'comment-reopened',
+        status: 'submitted',
+        resolutionStatus: 'partial',
+        counts: { total: 2, resolved: 1, open: 1 }
+      },
+      {
+        type: 'review.updated',
+        reviewId: created.meta.id,
+        reason: 'comment-resolved',
+        status: 'resolved',
+        resolutionStatus: 'resolved',
+        counts: { total: 2, resolved: 2, open: 0 }
+      }
+    ]);
+  });
+
   it('rejects invalid comment IDs and pending review comment resolution', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
@@ -306,4 +373,65 @@ function makeComment(id = 'comment-1'): Comment {
     originalSnippet: 'export const api = true;',
     createdAt: '2026-05-22T12:00:01.000Z'
   };
+}
+
+async function readReviewUpdatedEvents(
+  response: Response,
+  count: number
+): Promise<Array<Extract<ReviewEvent, { type: 'review.updated' }>>> {
+  const updates: Array<Extract<ReviewEvent, { type: 'review.updated' }>> = [];
+  await readReviewEvents(response, (event) => {
+    if (event.type === 'review.updated') {
+      updates.push(event);
+    }
+    return updates.length === count;
+  });
+  return updates;
+}
+
+async function readReviewEvents(response: Response, count: number): Promise<ReviewEvent[]>;
+async function readReviewEvents(
+  response: Response,
+  isDone: (event: ReviewEvent) => boolean
+): Promise<ReviewEvent[]>;
+async function readReviewEvents(
+  response: Response,
+  countOrIsDone: number | ((event: ReviewEvent) => boolean)
+): Promise<ReviewEvent[]> {
+  if (!response.body) {
+    throw new Error('missing event stream body');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: ReviewEvent[] = [];
+  const isDone =
+    typeof countOrIsDone === 'number'
+      ? () => events.length === countOrIsDone
+      : (event: ReviewEvent) => countOrIsDone(event);
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) {
+        throw new Error('event stream ended before expected events');
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split('\n\n');
+      buffer = chunks.pop() ?? '';
+      for (const chunk of chunks) {
+        const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'));
+        if (!dataLine) {
+          continue;
+        }
+        const event = JSON.parse(dataLine.slice(5).trim()) as ReviewEvent;
+        events.push(event);
+        if (isDone(event)) {
+          return events;
+        }
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
 }
