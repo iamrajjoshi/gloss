@@ -134,12 +134,22 @@ export interface ResolveResult {
   resolution: ResolutionBundle;
 }
 
+export type ReviewUpdateReason = 'review-resolved' | 'comment-resolved' | 'comment-reopened';
+
 export type ReviewEvent =
   | { type: 'review.opened'; reviewId: string }
   | {
       type: 'review.submitted';
       reviewId: string;
       counts: { files: number; comments: number };
+    }
+  | {
+      type: 'review.updated';
+      reviewId: string;
+      reason: ReviewUpdateReason;
+      status: ReviewStatus;
+      resolutionStatus: ResolutionStatus;
+      counts: ResolutionCounts;
     }
   | { type: 'review.cancelled'; reviewId: string };
 

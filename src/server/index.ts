@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { globalReviewDir, packageVersion } from '../shared/paths';
 import type { Comment, DiffPayload, ReviewEvent } from '../shared/types';
 import { reviewStore } from './store';
@@ -64,71 +65,57 @@ export function createApp(origin: string): Hono {
       return c.json({ error: 'review not found' }, 404);
     }
 
-    const encoder = new TextEncoder();
-    let cleanup: (() => void) | null = null;
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        let closed = false;
-        let heartbeat: ReturnType<typeof setInterval> | null = null;
-        const write = (chunk: string) => {
-          if (!closed) {
-            controller.enqueue(encoder.encode(chunk));
-          }
-        };
-        const close = () => {
+    return streamSSE(c, async (stream) => {
+      let closed = false;
+      let pending: Promise<unknown> = Promise.resolve();
+      let cleanup: (() => void) | null = null;
+      let close: (() => void) | null = null;
+      const closedPromise = new Promise<void>((resolve) => {
+        close = () => {
           if (closed) {
             return;
           }
           closed = true;
-          if (heartbeat) {
-            clearInterval(heartbeat);
-          }
           cleanup?.();
+          resolve();
         };
-        const send = (event: ReviewEvent) => {
-          write(`data: ${JSON.stringify(event)}\n\n`);
-          if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
-            close();
-            controller.close();
-          }
-        };
-        const unsubscribe = reviewStore.subscribe(id, send);
-        heartbeat = setInterval(() => {
-          write(`: keep-alive ${Date.now()}\n\n`);
-        }, eventStreamHeartbeatMs);
-        cleanup = () => {
-          if (heartbeat) {
-            clearInterval(heartbeat);
-          }
-          unsubscribe();
-        };
-        send({ type: 'review.opened', reviewId: id });
-        if (
-          (record.meta.status === 'submitted' || record.meta.status === 'resolved') &&
-          record.feedback
-        ) {
-          send({
-            type: 'review.submitted',
-            reviewId: id,
-            counts: {
-              files: new Set(record.feedback.comments.map((comment) => comment.filePath)).size,
-              comments: record.feedback.comments.length
+      });
+      const send = (event: ReviewEvent) => {
+        pending = pending
+          .then(() => stream.writeSSE({ data: JSON.stringify(event) }))
+          .then(() => {
+            if (event.type === 'review.cancelled') {
+              close?.();
             }
           });
-        }
-      },
-      cancel() {
-        cleanup?.();
-      }
-    });
+        void pending.catch(() => close?.());
+      };
+      const unsubscribe = reviewStore.subscribe(id, send);
+      const heartbeat = setInterval(() => {
+        pending = pending.then(() => stream.write(`: keep-alive ${Date.now()}\n\n`));
+        void pending.catch(() => close?.());
+      }, eventStreamHeartbeatMs);
+      cleanup = () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      };
+      stream.onAbort(() => close?.());
 
-    return new Response(stream, {
-      headers: {
-        'cache-control': 'no-cache, no-transform',
-        connection: 'keep-alive',
-        'content-type': 'text/event-stream',
-        'x-accel-buffering': 'no'
+      send({ type: 'review.opened', reviewId: id });
+      if (
+        (record.meta.status === 'submitted' || record.meta.status === 'resolved') &&
+        record.feedback
+      ) {
+        send({
+          type: 'review.submitted',
+          reviewId: id,
+          counts: {
+            files: new Set(record.feedback.comments.map((comment) => comment.filePath)).size,
+            comments: record.feedback.comments.length
+          }
+        });
       }
+      await closedPromise;
     });
   });
 

@@ -109,6 +109,7 @@ export class ServerClient {
         }
         const event = JSON.parse(dataLine.slice(5).trim()) as ReviewEvent;
         if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
+          await reader.cancel().catch(() => undefined);
           return event;
         }
       }
