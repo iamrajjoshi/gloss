@@ -1,5 +1,5 @@
 import { CheckCircle2, GitBranch, LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ReviewRecord } from '../../shared/types';
 import { fetchReview } from '../api';
 import { DiffView } from '../components/DiffView';
@@ -12,6 +12,19 @@ export function Review({ reviewId }: { reviewId: string }) {
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
 
+  const applyRecord = useCallback(
+    (nextRecord: ReviewRecord) => {
+      setRecord(nextRecord);
+      hydrateReview(nextRecord.feedback?.comments ?? [], nextRecord.resolution ?? null);
+    },
+    [hydrateReview]
+  );
+
+  const reloadReview = useCallback(async () => {
+    const nextRecord = await fetchReview(reviewId);
+    applyRecord(nextRecord);
+  }, [reviewId, applyRecord]);
+
   useEffect(() => {
     let cancelled = false;
     setRecord(null);
@@ -22,8 +35,7 @@ export function Review({ reviewId }: { reviewId: string }) {
         if (cancelled) {
           return;
         }
-        setRecord(nextRecord);
-        hydrateReview(nextRecord.feedback?.comments ?? [], nextRecord.resolution ?? null);
+        applyRecord(nextRecord);
       })
       .catch((reason) => {
         if (!cancelled) {
@@ -33,7 +45,7 @@ export function Review({ reviewId }: { reviewId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [reviewId, reset, hydrateReview]);
+  }, [reviewId, reset, applyRecord]);
 
   if (error) {
     return (
@@ -95,7 +107,7 @@ export function Review({ reviewId }: { reviewId: string }) {
       </header>
       {readOnly ? <ReviewStateBanner record={record} /> : null}
       <DiffView record={record} readOnly={readOnly} />
-      {readOnly ? null : <SubmitBar reviewId={reviewId} />}
+      {readOnly ? null : <SubmitBar reviewId={reviewId} onSubmitted={reloadReview} />}
     </main>
   );
 }

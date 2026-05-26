@@ -19,10 +19,11 @@ describe('isServerResponsive', () => {
   it('requires the daemon health version to match the CLI version', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ ok: true, version: '0.3.0', activeReviews: 0 }), {
-          headers: { 'content-type': 'application/json' }
-        })
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, version: '0.3.0', activeReviews: 0 }), {
+            headers: { 'content-type': 'application/json' }
+          })
       )
     );
 
@@ -32,10 +33,11 @@ describe('isServerResponsive', () => {
   it('accepts a healthy daemon running the same version', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ ok: true, version: packageVersion, activeReviews: 0 }), {
-          headers: { 'content-type': 'application/json' }
-        })
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, version: packageVersion, activeReviews: 0 }), {
+            headers: { 'content-type': 'application/json' }
+          })
       )
     );
 
