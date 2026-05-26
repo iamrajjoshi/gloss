@@ -55,8 +55,10 @@ The skill pairs the CLI with the browser app:
 3. Read `feedbackPath` from the JSON output.
 4. Address each comment in file and line order.
 5. Validate the fix with the narrowest relevant checks.
-6. Mark the review resolved with MCP tools when available, then summarize what
-   changed.
+6. Optionally mark individual comments handled with
+   `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`.
+7. Run `gloss resolve <reviewId> --summary "<what changed>"`, then summarize
+   what changed.
 
 ## Update Your Persistent Instructions
 
@@ -158,10 +160,22 @@ Open a review and return immediately:
 gloss open --json --no-watch
 ```
 
-Read pending/completed reviews through MCP:
+Mark a submitted review handled after applying feedback:
 
 ```bash
-gloss mcp
+gloss resolve <reviewId> --summary "Applied review feedback"
+```
+
+Mark one submitted comment handled while work is in progress:
+
+```bash
+gloss resolve <reviewId> --comment <commentId> --summary "Applied this comment"
+```
+
+For a follow-up pass after fixes or new commits, start a fresh session:
+
+```bash
+gloss open --json
 ```
 
 Diagnose setup:

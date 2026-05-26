@@ -3,6 +3,7 @@ import type {
   DiffPayload,
   FeedbackBundle,
   OpenResult,
+  ResolveResult,
   ReviewEvent,
   ReviewMeta,
   ReviewRecord
@@ -31,8 +32,20 @@ export class ServerClient {
     return this.get(`/api/reviews/${reviewId}/feedback`);
   }
 
-  async markResolved(reviewId: string, summary?: string): Promise<{ ok: true; path: string }> {
+  async markResolved(reviewId: string, summary?: string): Promise<ResolveResult> {
     return this.post(`/api/reviews/${reviewId}/resolved`, { summary });
+  }
+
+  async resolveComment(
+    reviewId: string,
+    commentId: string,
+    summary?: string
+  ): Promise<ResolveResult> {
+    return this.post(`/api/reviews/${reviewId}/comments/${commentId}/resolved`, { summary });
+  }
+
+  async reopenComment(reviewId: string, commentId: string): Promise<ResolveResult> {
+    return this.delete(`/api/reviews/${reviewId}/comments/${commentId}/resolved`);
   }
 
   async submitReview(reviewId: string, comments: Comment[]): Promise<OpenResult> {
@@ -72,7 +85,7 @@ export class ServerClient {
             continue;
           }
           const event = JSON.parse(dataLine.slice(5).trim()) as ReviewEvent;
-          if (event.type === 'review.completed' || event.type === 'review.cancelled') {
+          if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
             return event;
           }
         }
@@ -95,6 +108,11 @@ export class ServerClient {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body)
     });
+    return parseResponse<T>(response);
+  }
+
+  private async delete<T>(path: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, { method: 'DELETE' });
     return parseResponse<T>(response);
   }
 }

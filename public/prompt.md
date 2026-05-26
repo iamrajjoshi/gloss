@@ -25,7 +25,11 @@ user clicks Submit in the browser, and that exit is your signal to resume.
 When `gloss open --json` exits, parse the JSON output. Prefer reading
 `feedbackPath` from disk when present, because it contains the durable structured
 feedback bundle. Address every comment in file/line order, then run the
-narrowest relevant validation.
+narrowest relevant validation. After validation, run
+`gloss resolve <reviewId> --summary "<what changed>"`.
+When tracking progress comment-by-comment is useful, run
+`gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`
+after applying that specific comment.
 
 If the user only wants a review URL and does not want you to wait, run:
 
@@ -33,15 +37,20 @@ If the user only wants a review URL and does not want you to wait, run:
 gloss open --json --no-watch
 ```
 
+If the user asks for another pass after fixes, commits, or additional changes,
+start a fresh review session with `gloss open --json`.
+
 Gloss feedback is stored under:
 
 ```text
 ~/.gloss/reviews/<reviewId>/feedback.json
 ~/.gloss/reviews/<reviewId>/feedback.md
+~/.gloss/reviews/<reviewId>/resolved.json
 ```
 
 Use `feedback.json` for structured agent work. Use `feedback.md` when a human
-readable summary is useful.
+readable summary is useful. Use `resolved.json` as Gloss's mutable resolution
+progress file; do not edit `feedback.json`.
 
 Gloss is for code diffs. Do not use it for Markdown plan annotation; use
 Roughdraft for Markdown review if the user has Roughdraft installed.
@@ -51,9 +60,7 @@ Useful commands:
 ```bash
 gloss status --json
 gloss watch <reviewId> --json
+gloss resolve <reviewId> --comment <commentId> --summary "Applied one comment"
+gloss resolve <reviewId> --summary "Applied review feedback"
 gloss doctor
-gloss mcp
 ```
-
-The MCP server exposes tools to list pending reviews, fetch review details,
-watch for completion, read feedback, and mark a review resolved.

@@ -40,14 +40,15 @@ describe('ReviewStore global persistence', () => {
     expect(existsSync(record.meta.artifactDir)).toBe(true);
 
     const {
-      record: completed,
+      record: submitted,
       feedbackPath,
       markdownPath
     } = await store.submit(record.meta.id, [makeComment()]);
 
-    expect(completed.meta.status).toBe('completed');
-    expect(completed.meta.feedbackPath).toBe(feedbackPath);
-    expect(completed.meta.markdownPath).toBe(markdownPath);
+    expect(submitted.meta.status).toBe('submitted');
+    expect(submitted.meta.submittedAt).toBeTruthy();
+    expect(submitted.meta.feedbackPath).toBe(feedbackPath);
+    expect(submitted.meta.markdownPath).toBe(markdownPath);
     expect(feedbackPath).toBe(globalReviewFeedbackFile(record.meta.id));
     expect(markdownPath).toBe(globalReviewMarkdownFile(record.meta.id));
     expect(existsSync(path.join(repoRoot, '.gloss'))).toBe(false);
@@ -57,20 +58,102 @@ describe('ReviewStore global persistence', () => {
     const loaded = await reloaded.get(record.meta.id);
 
     expect(reviews).toHaveLength(1);
-    expect(loaded?.meta.status).toBe('completed');
+    expect(loaded?.meta.status).toBe('submitted');
     expect(loaded?.feedback?.comments).toHaveLength(1);
     expect(await reloaded.feedback(record.meta.id)).toEqual(loaded?.feedback);
 
-    const resolvedPath = await reloaded.markResolved(record.meta.id, 'fixed locally');
+    const result = await reloaded.markResolved(record.meta.id, 'fixed locally');
+    const resolvedPath = result.path;
     const resolved = await reloaded.get(record.meta.id);
     const resolvedPayload = JSON.parse(await readFile(resolvedPath, 'utf8')) as {
+      status: string;
       summary: string;
+      comments: Array<{ commentId: string; status: string }>;
     };
 
     expect(resolvedPath).toBe(globalReviewResolvedFile(record.meta.id));
     expect(resolved?.meta.status).toBe('resolved');
-    expect(resolvedPayload.summary).toBe('fixed locally');
+    expect(resolved?.resolution).toEqual(resolvedPayload);
+    expect(resolvedPayload).toMatchObject({
+      reviewId: record.meta.id,
+      status: 'resolved',
+      summary: 'fixed locally',
+      comments: [{ commentId: 'comment-1', status: 'resolved' }]
+    });
     expect(existsSync(path.join(repoRoot, '.gloss'))).toBe(false);
+  });
+
+  it('tracks comment-level resolution progress separately from submitted feedback', async () => {
+    const store = new ReviewStore();
+    const record = await store.create(makeDiff(repoRoot));
+    await store.submit(record.meta.id, [makeComment('comment-1'), makeComment('comment-2')]);
+
+    const partial = await store.resolveComment(record.meta.id, 'comment-1', 'fixed first item');
+    const partiallyResolved = await store.get(record.meta.id);
+    const partialPayload = JSON.parse(await readFile(partial.path, 'utf8')) as {
+      status: string;
+      summary: string | null;
+      comments: Array<{ commentId: string; summary?: string }>;
+    };
+
+    expect(partial).toMatchObject({
+      status: 'submitted',
+      resolutionStatus: 'partial',
+      comments: { total: 2, resolved: 1, open: 1 },
+      path: globalReviewResolvedFile(record.meta.id)
+    });
+    expect(partiallyResolved?.meta.status).toBe('submitted');
+    expect(partiallyResolved?.feedback?.comments).toHaveLength(2);
+    expect(partialPayload).toMatchObject({
+      reviewId: record.meta.id,
+      status: 'partial',
+      summary: null,
+      comments: [{ commentId: 'comment-1', summary: 'fixed first item' }]
+    });
+
+    const complete = await store.resolveComment(record.meta.id, 'comment-2');
+    const resolved = await store.get(record.meta.id);
+
+    expect(complete).toMatchObject({
+      status: 'resolved',
+      resolutionStatus: 'resolved',
+      comments: { total: 2, resolved: 2, open: 0 }
+    });
+    expect(resolved?.meta.status).toBe('resolved');
+
+    const reopened = await store.reopenComment(record.meta.id, 'comment-1');
+    const reopenedRecord = await store.get(record.meta.id);
+
+    expect(reopened).toMatchObject({
+      status: 'submitted',
+      resolutionStatus: 'partial',
+      comments: { total: 2, resolved: 1, open: 1 }
+    });
+    expect(reopenedRecord?.meta.status).toBe('submitted');
+    expect(reopenedRecord?.resolution?.comments.map((comment) => comment.commentId)).toEqual([
+      'comment-2'
+    ]);
+  });
+
+  it('rejects invalid comment IDs and pending review resolution', async () => {
+    const store = new ReviewStore();
+    const pending = await store.create(makeDiff(repoRoot));
+
+    await expect(store.markResolved(pending.meta.id, 'too early')).rejects.toThrow(
+      /cannot be resolved/
+    );
+    await expect(store.resolveComment(pending.meta.id, 'comment-1')).rejects.toThrow(
+      /cannot be resolved/
+    );
+
+    await store.submit(pending.meta.id, [makeComment('comment-1')]);
+
+    await expect(store.resolveComment(pending.meta.id, 'missing-comment')).rejects.toThrow(
+      /not found/
+    );
+    await expect(store.reopenComment(pending.meta.id, 'missing-comment')).rejects.toThrow(
+      /not found/
+    );
   });
 
   it('reloads pending reviews from the global store', async () => {
@@ -134,9 +217,9 @@ function makeDiff(cwd: string): DiffPayload {
   };
 }
 
-function makeComment(): Comment {
+function makeComment(id = 'comment-1'): Comment {
   return {
-    id: 'comment-1',
+    id,
     filePath: 'app.ts',
     startLine: 1,
     endLine: 1,

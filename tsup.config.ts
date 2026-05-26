@@ -3,8 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: {
     'cli/index': 'src/cli/index.ts',
-    'server/daemon': 'src/server/daemon.ts',
-    'mcp/index': 'src/mcp/index.ts'
+    'server/daemon': 'src/server/daemon.ts'
   },
   clean: false,
   dts: false,

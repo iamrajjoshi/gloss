@@ -250,7 +250,7 @@ function HeroDiffScene() {
   const commentLabel = `${comments.length} review comment${comments.length === 1 ? '' : 's'}`;
   const terminalLines = submitted
     ? [
-        { marker: '✓', text: 'review.completed received' },
+        { marker: '✓', text: 'review.submitted received' },
         { marker: '→', text: 'reading ~/.gloss/reviews/01KS5/feedback.json' },
         { marker: '→', text: `applying ${commentLabel}` },
         { marker: '→', text: 'running pnpm check' }
@@ -258,7 +258,7 @@ function HeroDiffScene() {
     : [
         { marker: '$', text: 'gloss open --json' },
         { marker: '→', text: 'captured 4 files, +128 -31' },
-        { marker: '→', text: 'waiting for review.completed' }
+        { marker: '→', text: 'waiting for review.submitted' }
       ];
   const visibleDemoRows = expanded
     ? demoCodeRows
@@ -486,7 +486,7 @@ function HeroDiffScene() {
               <div className="agent-update-card">
                 <code>~/.gloss/reviews/01KS5/feedback.json</code>
                 <ul>
-                  {['Read feedback', 'Applied comment', 'Validated'].map((item) => (
+                  {['Read feedback', 'Resolved comment', 'Validated'].map((item) => (
                     <li key={item}>
                       <Check size={13} />
                       <span>{item}</span>
@@ -628,7 +628,7 @@ export function MarketingHome() {
             title="Fix and validate"
             body="The agent applies comments and runs checks."
           />
-          <WorkflowStep step="05" title="Resolve" body="The agent marks the review handled." />
+          <WorkflowStep step="05" title="Resolve" body="The agent runs `gloss resolve`." />
         </div>
       </section>
 
@@ -644,7 +644,8 @@ export function MarketingHome() {
           <div className="contract-copy">
             <p>
               <code>feedback.json</code> is the machine-readable handoff; <code>feedback.md</code>{' '}
-              is the human-readable copy.
+              is the human-readable copy; <code>resolved.json</code> tracks comment and review
+              resolution progress.
             </p>
           </div>
         </div>

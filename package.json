@@ -31,7 +31,6 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.14.4",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@pierre/diffs": "^1.2.1",
     "@tailwindcss/vite": "^4.1.7",
     "commander": "^14.0.0",
@@ -62,8 +61,7 @@
   "keywords": [
     "diff",
     "review",
-    "coding-agents",
-    "mcp"
+    "coding-agents"
   ],
   "author": "Raj Joshi",
   "license": "MIT",

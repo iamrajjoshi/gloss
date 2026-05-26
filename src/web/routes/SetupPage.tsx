@@ -4,7 +4,9 @@ const skillWorkflow = `1. Run gloss open --json from the repo root unless the us
 3. Read feedbackPath from the JSON output.
 4. Address each comment in file and line order.
 5. Validate the fix with the narrowest relevant checks.
-6. Mark the review resolved with MCP tools when available, then summarize what changed.`;
+6. Optionally mark individual comments handled:
+   gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"
+7. Run gloss resolve <reviewId> --summary "<what changed>", then summarize what changed.`;
 
 export function SetupPage() {
   return (
@@ -73,6 +75,7 @@ export function SetupPage() {
           Leave the command running. Gloss exits after the browser review is submitted and writes
           feedback under <code>~/.gloss/reviews/&lt;reviewId&gt;/</code>.
         </p>
+        <p>Start a fresh session with the same command for follow-up diffs.</p>
       </section>
 
       <section className="setup-note">

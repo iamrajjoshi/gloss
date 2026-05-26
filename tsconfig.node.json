@@ -4,5 +4,5 @@
     "lib": ["ES2022"],
     "jsx": "react-jsx"
   },
-  "include": ["src/cli", "src/server", "src/mcp", "src/shared", "scripts", "tsup.config.ts"]
+  "include": ["src/cli", "src/server", "src/shared", "scripts", "tsup.config.ts"]
 }

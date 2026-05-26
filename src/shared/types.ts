@@ -1,6 +1,6 @@
 export type Side = 'L' | 'R';
 
-export type ReviewStatus = 'pending' | 'completed' | 'cancelled' | 'resolved';
+export type ReviewStatus = 'pending' | 'submitted' | 'cancelled' | 'resolved';
 
 export interface Comment {
   id: string;
@@ -85,7 +85,7 @@ export interface ReviewMeta {
   branch: string | null;
   status: ReviewStatus;
   createdAt: string;
-  completedAt?: string;
+  submittedAt?: string;
   resolvedAt?: string;
   artifactDir: string;
   feedbackPath?: string;
@@ -101,10 +101,43 @@ export interface FeedbackBundle {
   comments: Comment[];
 }
 
+export type ResolutionStatus = 'partial' | 'resolved';
+
+export interface ResolvedComment {
+  commentId: string;
+  status: 'resolved';
+  summary?: string;
+  resolvedAt: string;
+}
+
+export interface ResolutionBundle {
+  reviewId: string;
+  status: ResolutionStatus;
+  summary: string | null;
+  resolvedAt: string | null;
+  comments: ResolvedComment[];
+}
+
+export interface ResolutionCounts {
+  total: number;
+  resolved: number;
+  open: number;
+}
+
+export interface ResolveResult {
+  ok: true;
+  reviewId: string;
+  status: ReviewStatus;
+  resolutionStatus: ResolutionStatus;
+  comments: ResolutionCounts;
+  path: string;
+  resolution: ResolutionBundle;
+}
+
 export type ReviewEvent =
   | { type: 'review.opened'; reviewId: string }
   | {
-      type: 'review.completed';
+      type: 'review.submitted';
       reviewId: string;
       counts: { files: number; comments: number };
     }
@@ -114,6 +147,7 @@ export interface ReviewRecord {
   meta: ReviewMeta;
   diff: DiffPayload;
   feedback?: FeedbackBundle;
+  resolution?: ResolutionBundle;
 }
 
 export interface ServerInfo {

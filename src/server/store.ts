@@ -16,6 +16,9 @@ import type {
   Comment,
   DiffPayload,
   FeedbackBundle,
+  ResolutionBundle,
+  ResolvedComment,
+  ResolveResult,
   ReviewEvent,
   ReviewMeta,
   ReviewRecord
@@ -65,6 +68,9 @@ export class ReviewStore {
     if (!record) {
       throw new Error(`Review ${id} not found`);
     }
+    if (record.meta.status !== 'pending') {
+      throw new Error(`Review ${id} is ${record.meta.status} and cannot be submitted`);
+    }
     const timestamp = new Date().toISOString();
     const feedback: FeedbackBundle = {
       version: 1,
@@ -81,7 +87,7 @@ export class ReviewStore {
       )
     };
     record.feedback = feedback;
-    record.meta = { ...record.meta, status: 'completed', completedAt: timestamp };
+    record.meta = { ...record.meta, status: 'submitted', submittedAt: timestamp };
     this.reviews.set(id, record);
 
     const artifactDir = globalReviewDir(id);
@@ -101,7 +107,7 @@ export class ReviewStore {
     ]);
 
     this.emit({
-      type: 'review.completed',
+      type: 'review.submitted',
       reviewId: id,
       counts: {
         files: new Set(feedback.comments.map((comment) => comment.filePath)).size,
@@ -116,22 +122,101 @@ export class ReviewStore {
     return record?.feedback ?? null;
   }
 
-  async markResolved(id: string, summary?: string): Promise<string> {
+  async markResolved(id: string, summary?: string): Promise<ResolveResult> {
     const record = await this.get(id);
     if (!record) {
       throw new Error(`Review ${id} not found`);
     }
+    this.assertResolvable(record, id);
     const resolvedAt = new Date().toISOString();
-    const resolvedPath = globalReviewResolvedFile(id);
-    record.meta = { ...record.meta, status: 'resolved', resolvedAt };
-    this.reviews.set(id, record);
-    await ensureDir(globalReviewDir(id));
-    await writeFile(
-      resolvedPath,
-      `${JSON.stringify({ reviewId: id, summary: summary ?? null, resolvedAt }, null, 2)}\n`
+    const existingById = new Map(
+      (record.resolution?.comments ?? []).map((comment) => [comment.commentId, comment])
     );
-    await writeFile(globalReviewMetaFile(id), `${JSON.stringify(record.meta, null, 2)}\n`);
-    return resolvedPath;
+    const comments = this.sortResolvedComments(
+      (record.feedback?.comments ?? []).map((comment) => ({
+        ...existingById.get(comment.id),
+        commentId: comment.id,
+        status: 'resolved' as const,
+        resolvedAt: existingById.get(comment.id)?.resolvedAt ?? resolvedAt
+      })),
+      record
+    );
+    const resolution: ResolutionBundle = {
+      reviewId: id,
+      status: 'resolved',
+      summary: summary ?? record.resolution?.summary ?? null,
+      resolvedAt,
+      comments
+    };
+    record.meta = { ...record.meta, status: 'resolved', resolvedAt };
+    return this.persistResolution(record, resolution);
+  }
+
+  async resolveComment(id: string, commentId: string, summary?: string): Promise<ResolveResult> {
+    const record = await this.get(id);
+    if (!record) {
+      throw new Error(`Review ${id} not found`);
+    }
+    this.assertResolvable(record, id);
+    this.assertCommentExists(record, commentId);
+
+    const resolvedAt = new Date().toISOString();
+    const previous = record.resolution?.comments.find((comment) => comment.commentId === commentId);
+    const nextSummary = summary ?? previous?.summary;
+    const nextComment: ResolvedComment = {
+      commentId,
+      status: 'resolved',
+      ...(nextSummary ? { summary: nextSummary } : {}),
+      resolvedAt
+    };
+    const comments = this.sortResolvedComments(
+      [
+        ...(record.resolution?.comments ?? []).filter((comment) => comment.commentId !== commentId),
+        nextComment
+      ],
+      record
+    );
+    const counts = this.resolutionCounts(record, comments);
+    const fullyResolved = counts.total === counts.resolved;
+    const resolution: ResolutionBundle = {
+      reviewId: id,
+      status: fullyResolved ? 'resolved' : 'partial',
+      summary: fullyResolved ? (record.resolution?.summary ?? null) : null,
+      resolvedAt: fullyResolved ? resolvedAt : null,
+      comments
+    };
+    record.meta = fullyResolved
+      ? { ...record.meta, status: 'resolved', resolvedAt }
+      : { ...record.meta, status: 'submitted', resolvedAt: undefined };
+    return this.persistResolution(record, resolution);
+  }
+
+  async reopenComment(id: string, commentId: string): Promise<ResolveResult> {
+    const record = await this.get(id);
+    if (!record) {
+      throw new Error(`Review ${id} not found`);
+    }
+    this.assertResolvable(record, id);
+    this.assertCommentExists(record, commentId);
+
+    const comments = this.sortResolvedComments(
+      (record.resolution?.comments ?? []).filter((comment) => comment.commentId !== commentId),
+      record
+    );
+    const counts = this.resolutionCounts(record, comments);
+    const fullyResolved = counts.total > 0 && counts.total === counts.resolved;
+    const resolvedAt = fullyResolved ? new Date().toISOString() : null;
+    const resolution: ResolutionBundle = {
+      reviewId: id,
+      status: fullyResolved ? 'resolved' : 'partial',
+      summary: fullyResolved ? (record.resolution?.summary ?? null) : null,
+      resolvedAt,
+      comments
+    };
+    record.meta = fullyResolved
+      ? { ...record.meta, status: 'resolved', resolvedAt: resolvedAt ?? undefined }
+      : { ...record.meta, status: 'submitted', resolvedAt: undefined };
+    return this.persistResolution(record, resolution);
   }
 
   subscribe(reviewId: string, listener: Listener): () => void {
@@ -192,12 +277,20 @@ export class ReviewStore {
       const meta = JSON.parse(metaRaw) as ReviewMeta;
       const diff = JSON.parse(diffRaw) as DiffPayload;
       let feedback: FeedbackBundle | undefined;
+      let resolution: ResolutionBundle | undefined;
       try {
         feedback = JSON.parse(
           await readFile(globalReviewFeedbackFile(id), 'utf8')
         ) as FeedbackBundle;
       } catch {
         feedback = undefined;
+      }
+      try {
+        resolution = JSON.parse(
+          await readFile(globalReviewResolvedFile(id), 'utf8')
+        ) as ResolutionBundle;
+      } catch {
+        resolution = undefined;
       }
 
       const record: ReviewRecord = {
@@ -208,13 +301,92 @@ export class ReviewStore {
           markdownPath: meta.markdownPath ?? (feedback ? globalReviewMarkdownFile(id) : undefined)
         },
         diff,
-        feedback
+        feedback,
+        resolution
       };
       this.reviews.set(id, record);
       return record;
     } catch {
       return null;
     }
+  }
+
+  private assertResolvable(
+    record: ReviewRecord,
+    id: string
+  ): asserts record is ReviewRecord & {
+    feedback: FeedbackBundle;
+  } {
+    if (record.meta.status !== 'submitted' && record.meta.status !== 'resolved') {
+      throw new Error(`Review ${id} is ${record.meta.status} and cannot be resolved`);
+    }
+    if (!record.feedback) {
+      throw new Error(`Review ${id} has no submitted feedback`);
+    }
+  }
+
+  private assertCommentExists(
+    record: ReviewRecord & { feedback: FeedbackBundle },
+    commentId: string
+  ): void {
+    if (!record.feedback.comments.some((comment) => comment.id === commentId)) {
+      throw new Error(`Comment ${commentId} not found`);
+    }
+  }
+
+  private async persistResolution(
+    record: ReviewRecord & { feedback: FeedbackBundle },
+    resolution: ResolutionBundle
+  ): Promise<ResolveResult> {
+    record.resolution = resolution;
+    this.reviews.set(record.meta.id, record);
+    const resolvedPath = globalReviewResolvedFile(record.meta.id);
+    await ensureDir(globalReviewDir(record.meta.id));
+    await Promise.all([
+      writeFile(resolvedPath, `${JSON.stringify(resolution, null, 2)}\n`),
+      writeFile(globalReviewMetaFile(record.meta.id), `${JSON.stringify(record.meta, null, 2)}\n`)
+    ]);
+    return {
+      ok: true,
+      reviewId: record.meta.id,
+      status: record.meta.status,
+      resolutionStatus: resolution.status,
+      comments: this.resolutionCounts(record, resolution.comments),
+      path: resolvedPath,
+      resolution
+    };
+  }
+
+  private sortResolvedComments(
+    comments: ResolvedComment[],
+    record: ReviewRecord & { feedback: FeedbackBundle }
+  ): ResolvedComment[] {
+    const feedbackIndex = new Map(
+      record.feedback.comments.map((comment, index) => [comment.id, index] as const)
+    );
+    return comments
+      .filter((comment) => feedbackIndex.has(comment.commentId))
+      .sort(
+        (a, b) =>
+          (feedbackIndex.get(a.commentId) ?? Number.MAX_SAFE_INTEGER) -
+          (feedbackIndex.get(b.commentId) ?? Number.MAX_SAFE_INTEGER)
+      );
+  }
+
+  private resolutionCounts(
+    record: ReviewRecord & { feedback: FeedbackBundle },
+    comments: ResolvedComment[]
+  ): { total: number; resolved: number; open: number } {
+    const total = record.feedback.comments.length;
+    const resolvedIds = new Set(comments.map((comment) => comment.commentId));
+    const resolved = record.feedback.comments.filter((comment) =>
+      resolvedIds.has(comment.id)
+    ).length;
+    return {
+      total,
+      resolved,
+      open: total - resolved
+    };
   }
 }
 

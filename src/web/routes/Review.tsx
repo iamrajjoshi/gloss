@@ -1,4 +1,4 @@
-import { GitBranch, LoaderCircle } from 'lucide-react';
+import { CheckCircle2, GitBranch, LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ReviewRecord } from '../../shared/types';
 import { fetchReview } from '../api';
@@ -10,13 +10,30 @@ export function Review({ reviewId }: { reviewId: string }) {
   const [record, setRecord] = useState<ReviewRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reset = useReviewStore((state) => state.reset);
+  const hydrateReview = useReviewStore((state) => state.hydrateReview);
 
   useEffect(() => {
+    let cancelled = false;
+    setRecord(null);
+    setError(null);
     reset();
     fetchReview(reviewId)
-      .then(setRecord)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  }, [reviewId, reset]);
+      .then((nextRecord) => {
+        if (cancelled) {
+          return;
+        }
+        setRecord(nextRecord);
+        hydrateReview(nextRecord.feedback?.comments ?? [], nextRecord.resolution ?? null);
+      })
+      .catch((reason) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewId, reset, hydrateReview]);
 
   if (error) {
     return (
@@ -42,6 +59,7 @@ export function Review({ reviewId }: { reviewId: string }) {
 
   const scope = record.diff.scope;
   const stats = record.diff.stats;
+  const readOnly = record.meta.status === 'submitted' || record.meta.status === 'resolved';
 
   return (
     <main className="review-shell">
@@ -75,10 +93,74 @@ export function Review({ reviewId }: { reviewId: string }) {
           <span>{record.meta.branch ?? 'detached'}</span>
         </div>
       </header>
-      <DiffView record={record} />
-      <SubmitBar reviewId={reviewId} />
+      {readOnly ? <ReviewStateBanner record={record} /> : null}
+      <DiffView record={record} readOnly={readOnly} />
+      {readOnly ? null : <SubmitBar reviewId={reviewId} />}
     </main>
   );
+}
+
+function ReviewStateBanner({ record }: { record: ReviewRecord }) {
+  const state = stateContent(record);
+  if (!state) {
+    return null;
+  }
+  const timestamp =
+    record.meta.status === 'resolved'
+      ? (record.meta.resolvedAt ?? record.resolution?.resolvedAt)
+      : record.meta.submittedAt;
+
+  return (
+    <section className={`review-state-banner ${record.meta.status}`}>
+      <div className="review-state-title">
+        <CheckCircle2 size={16} />
+        <span>{state.title}</span>
+      </div>
+      <p>{state.body}</p>
+      {timestamp ? <time dateTime={timestamp}>{formatTimestamp(timestamp)}</time> : null}
+    </section>
+  );
+}
+
+function stateContent(record: ReviewRecord): { title: string; body: string } | null {
+  const status = record.meta.status;
+  const counts = resolutionCounts(record);
+  const progress =
+    counts.total > 0 ? `${counts.resolved} of ${counts.total} comments resolved` : null;
+  if (status === 'submitted') {
+    return {
+      title: counts.resolved > 0 && progress ? `Submitted · ${progress}` : 'Submitted',
+      body:
+        counts.resolved > 0
+          ? 'Feedback is being handled. Start a fresh Gloss review for the next diff.'
+          : 'Feedback has been submitted. Start a fresh Gloss review for the next diff.'
+    };
+  }
+  if (status === 'resolved') {
+    return {
+      title: progress ? `Resolved · ${progress}` : 'Resolved',
+      body: 'The agent marked this feedback loop resolved. Start a fresh Gloss review for new changes.'
+    };
+  }
+  return null;
+}
+
+function resolutionCounts(record: ReviewRecord): { total: number; resolved: number } {
+  const commentIds = new Set((record.feedback?.comments ?? []).map((comment) => comment.id));
+  const resolved = (record.resolution?.comments ?? []).filter((comment) =>
+    commentIds.has(comment.commentId)
+  ).length;
+  return {
+    total: commentIds.size,
+    resolved
+  };
+}
+
+function formatTimestamp(timestamp: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  }).format(new Date(timestamp));
 }
 
 function scopeTitle(record: ReviewRecord): string {
