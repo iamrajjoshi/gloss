@@ -69,7 +69,7 @@ export function createApp(origin: string): Hono {
       start(controller) {
         const send = (event: ReviewEvent) => {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-          if (event.type === 'review.completed' || event.type === 'review.cancelled') {
+          if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
             cleanup?.();
             controller.close();
           }
@@ -77,11 +77,11 @@ export function createApp(origin: string): Hono {
         cleanup = reviewStore.subscribe(id, send);
         send({ type: 'review.opened', reviewId: id });
         if (
-          (record.meta.status === 'completed' || record.meta.status === 'resolved') &&
+          (record.meta.status === 'submitted' || record.meta.status === 'resolved') &&
           record.feedback
         ) {
           send({
-            type: 'review.completed',
+            type: 'review.submitted',
             reviewId: id,
             counts: {
               files: new Set(record.feedback.comments.map((comment) => comment.filePath)).size,
@@ -106,6 +106,13 @@ export function createApp(origin: string): Hono {
 
   app.post('/api/reviews/:id/submit', async (c) => {
     const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    if (existing.meta.status !== 'pending') {
+      return c.json({ error: `review is ${existing.meta.status} and cannot be submitted` }, 409);
+    }
     const body = (await c.req.json()) as { comments: Comment[] };
     const { record, feedbackPath, markdownPath } = await reviewStore.submit(
       id,
@@ -123,9 +130,52 @@ export function createApp(origin: string): Hono {
   });
 
   app.post('/api/reviews/:id/resolved', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    if (existing.meta.status !== 'submitted' && existing.meta.status !== 'resolved') {
+      return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
+    }
+    if (!existing.feedback) {
+      return c.json({ error: 'submitted feedback not found' }, 409);
+    }
     const body = (await c.req.json().catch(() => ({}))) as { summary?: string };
-    const resolvedPath = await reviewStore.markResolved(c.req.param('id'), body.summary);
-    return c.json({ ok: true, path: resolvedPath });
+    return c.json(await reviewStore.markResolved(id, body.summary));
+  });
+
+  app.post('/api/reviews/:id/comments/:commentId/resolved', async (c) => {
+    const id = c.req.param('id');
+    const commentId = c.req.param('commentId');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    if (existing.meta.status !== 'submitted' && existing.meta.status !== 'resolved') {
+      return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
+    }
+    if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
+      return c.json({ error: 'comment not found' }, 404);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { summary?: string };
+    return c.json(await reviewStore.resolveComment(id, commentId, body.summary));
+  });
+
+  app.delete('/api/reviews/:id/comments/:commentId/resolved', async (c) => {
+    const id = c.req.param('id');
+    const commentId = c.req.param('commentId');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    if (existing.meta.status !== 'submitted' && existing.meta.status !== 'resolved') {
+      return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
+    }
+    if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
+      return c.json({ error: 'comment not found' }, 404);
+    }
+    return c.json(await reviewStore.reopenComment(id, commentId));
   });
 
   app.get('/logo.svg', serveRootFile('logo.svg', mimeTypes['.svg']));

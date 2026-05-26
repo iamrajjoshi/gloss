@@ -51,8 +51,8 @@ npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
 `-g` installs to `~/.claude/skills/`, `-a claude-code` targets Claude Code, and
 `--skill gloss` installs only the Gloss skill folder from the repo. The skill
 teaches agents to run `gloss open --json`, wait for browser submission, read
-`feedbackPath`, apply comments, validate, and mark the review resolved when MCP
-tools are available.
+`feedbackPath`, apply comments, validate, and mark comments or the review
+resolved with `gloss resolve`.
 
 The hosted install script remains npm-only:
 
@@ -65,10 +65,10 @@ curl -fsSL https://getgloss.dev/install.sh | sh
 ```text
 gloss open [--base <ref>] [--print-url] [--no-open] [--json] [--no-watch] [--timeout <s>]
 gloss watch <reviewId>
+gloss resolve <reviewId> [--comment <commentId>] [--summary <text>] [--json]
 gloss start [--port <port>]
 gloss status
 gloss stop
-gloss mcp
 gloss doctor
 ```
 
@@ -85,7 +85,7 @@ keeps the old behavior and does not fall back to a branch diff.
 
 ## Feedback Files
 
-Completed reviews are written to:
+Submitted reviews are written to:
 
 ```text
 ~/.gloss/reviews/<reviewId>/
@@ -97,20 +97,14 @@ Completed reviews are written to:
 ```
 
 `feedback.json` is the machine-readable payload. `feedback.md` is a readable
-summary ordered by file and line. Set `GLOSS_STATE_DIR` to use an isolated
-state root for tests or development.
-
-## MCP
-
-`gloss mcp` starts a stdio MCP server exposing:
-
-- `list_pending_reviews`
-- `get_review`
-- `watch_review`
-- `get_review_feedback`
-- `mark_review_resolved`
-
-The MCP process talks to the same localhost server as the CLI.
+summary ordered by file and line. `resolved.json` is mutable resolution
+progress for individual comments and the full review. After applying feedback,
+use `gloss resolve <reviewId> --comment <commentId> --summary "..."` for a
+single comment or `gloss resolve <reviewId> --summary "..."` for the whole
+review. Set `GLOSS_STATE_DIR` to use an isolated state root for tests or
+development.
+For a follow-up pass after fixes or new commits, start a fresh session with
+`gloss open --json`.
 
 ## Development
 

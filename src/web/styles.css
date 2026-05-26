@@ -361,6 +361,51 @@ pre {
   white-space: nowrap;
 }
 
+.review-state-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-16);
+  margin-top: var(--spacing-16);
+  padding: 10px 12px;
+  border: 1px solid var(--ide-border);
+  border-radius: var(--radius-panel);
+  background: rgba(21, 27, 35, 0.9);
+  color: var(--ide-fg-muted);
+  font-size: var(--text-small);
+}
+
+.review-state-banner.resolved {
+  border-color: color-mix(in srgb, var(--ide-success) 50%, var(--ide-border));
+  background: color-mix(in srgb, var(--ide-success) 12%, rgba(21, 27, 35, 0.9));
+}
+
+.review-state-title {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--spacing-8);
+  color: var(--ide-fg);
+  font-weight: var(--font-weight-medium);
+}
+
+.review-state-title svg {
+  color: var(--ide-success);
+}
+
+.review-state-banner p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-state-banner time {
+  margin-left: auto;
+  color: var(--ide-fg-muted);
+  white-space: nowrap;
+}
+
 .diff-stack {
   display: grid;
   gap: var(--spacing-16);
@@ -487,6 +532,22 @@ pre {
 
 .diff-row:hover {
   background: var(--ide-accent-muted);
+}
+
+.diff-row.read-only {
+  cursor: default;
+}
+
+.diff-row.read-only:hover {
+  background: transparent;
+}
+
+.diff-row.add.read-only:hover {
+  background: var(--ide-success-muted);
+}
+
+.diff-row.delete.read-only:hover {
+  background: var(--ide-danger-muted);
 }
 
 .diff-row.add {
@@ -644,9 +705,44 @@ pre {
   font-size: 13px;
 }
 
+.inline-comment.resolved {
+  border-color: color-mix(in srgb, var(--ide-success) 45%, var(--ide-border));
+  background: color-mix(in srgb, var(--ide-success-muted) 70%, var(--ide-bg-muted));
+  color: color-mix(in srgb, var(--ide-fg) 76%, var(--ide-fg-muted));
+}
+
 .inline-comment svg {
   color: var(--ide-warning);
   flex: 0 0 auto;
+}
+
+.inline-comment.resolved svg {
+  color: var(--ide-success);
+}
+
+.inline-comment-content {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.inline-comment-status {
+  color: var(--ide-fg-muted);
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.inline-comment-body,
+.inline-comment-summary {
+  overflow-wrap: anywhere;
+}
+
+.inline-comment-summary {
+  color: var(--ide-fg-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .draft-comment-shell {
@@ -2004,6 +2100,20 @@ pre {
 
   .branch-pill {
     max-width: 100%;
+  }
+
+  .review-state-banner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .review-state-banner p {
+    white-space: normal;
+  }
+
+  .review-state-banner time {
+    margin-left: 0;
   }
 
   .file-header {

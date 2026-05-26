@@ -1,5 +1,5 @@
 import { parsePatchFiles } from '@pierre/diffs';
-import { MessageSquare } from 'lucide-react';
+import { CheckCircle2, MessageSquare } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile, DiffLine, ReviewRecord, Side } from '../../shared/types';
 import { useReviewStore } from '../store';
@@ -18,7 +18,13 @@ interface SelectionRef {
   end: RowRef;
 }
 
-export function DiffView({ record }: { record: ReviewRecord }) {
+export function DiffView({
+  record,
+  readOnly = false
+}: {
+  record: ReviewRecord;
+  readOnly?: boolean;
+}) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
@@ -54,7 +60,7 @@ export function DiffView({ record }: { record: ReviewRecord }) {
                   });
                 }}
               />
-              {collapsed ? null : <DiffFileTable file={file} />}
+              {collapsed ? null : <DiffFileTable file={file} readOnly={readOnly} />}
             </article>
           );
         })
@@ -102,8 +108,9 @@ function EmptyDiff({ record }: { record: ReviewRecord }) {
   );
 }
 
-function DiffFileTable({ file }: { file: DiffFile }) {
+function DiffFileTable({ file, readOnly }: { file: DiffFile; readOnly: boolean }) {
   const comments = useReviewStore((state) => state.comments);
+  const resolution = useReviewStore((state) => state.resolution);
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
@@ -111,6 +118,10 @@ function DiffFileTable({ file }: { file: DiffFile }) {
   const selectionRef = useRef<SelectionRef | null>(null);
   const cleanupSelectionListeners = useRef<(() => void) | null>(null);
   const visualIndexByLine = useMemo(() => buildVisualIndex(file), [file]);
+  const resolvedByCommentId = useMemo(
+    () => new Map((resolution?.comments ?? []).map((comment) => [comment.commentId, comment])),
+    [resolution]
+  );
   let previousNewEnd = 0;
 
   const fileComments = comments.filter((comment) => comment.filePath === file.path);
@@ -282,13 +293,18 @@ function DiffFileTable({ file }: { file: DiffFile }) {
                   key={`${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
                 >
                   <button
-                    className={`diff-row ${line.type} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
+                    className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
                     data-file-path={file.path}
                     data-line={lineNumber}
                     data-side={side}
                     type="button"
-                    onMouseDown={(event) => startSelection(row, event)}
-                    onMouseEnter={(event) => extendSelectionFromElement(event.currentTarget)}
+                    aria-disabled={readOnly}
+                    onMouseDown={readOnly ? undefined : (event) => startSelection(row, event)}
+                    onMouseEnter={
+                      readOnly
+                        ? undefined
+                        : (event) => extendSelectionFromElement(event.currentTarget)
+                    }
                   >
                     {selectionClass ? <span className="selection-rail" aria-hidden="true" /> : null}
                     <span className="line-number old">{line.oldLine ?? ''}</span>
@@ -296,13 +312,31 @@ function DiffFileTable({ file }: { file: DiffFile }) {
                     <span className="marker">{markerForLine(line)}</span>
                     <code>{line.content || ' '}</code>
                   </button>
-                  {rowComments.map((comment) => (
-                    <div className="inline-comment" key={comment.id}>
-                      <MessageSquare size={14} />
-                      <span>{comment.body}</span>
-                    </div>
-                  ))}
-                  {showDraftComposer ? <CommentComposer tone={line.type} /> : null}
+                  {rowComments.map((comment) => {
+                    const resolvedComment = resolvedByCommentId.get(comment.id);
+                    return (
+                      <div
+                        className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
+                        key={comment.id}
+                      >
+                        {resolvedComment ? <CheckCircle2 size={14} /> : <MessageSquare size={14} />}
+                        <span className="inline-comment-content">
+                          {readOnly ? (
+                            <span className="inline-comment-status">
+                              {resolvedComment ? 'Resolved' : 'Open · Needs fix'}
+                            </span>
+                          ) : null}
+                          <span className="inline-comment-body">{comment.body}</span>
+                          {resolvedComment?.summary ? (
+                            <span className="inline-comment-summary">
+                              {resolvedComment.summary}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {showDraftComposer && !readOnly ? <CommentComposer tone={line.type} /> : null}
                 </div>
               );
             })}

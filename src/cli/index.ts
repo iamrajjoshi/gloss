@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import openBrowser from 'open';
-import { startMcpServer } from '../mcp/index';
 import {
   globalReviewDir,
   globalReviewFeedbackFile,
@@ -89,7 +88,7 @@ program
         globals.json ? printJson(event) : printPlain(`Review ${meta.id} cancelled`);
         return;
       }
-      if (event.type !== 'review.completed') {
+      if (event.type !== 'review.submitted') {
         throw new Error(`Unexpected review event ${event.type}`);
       }
 
@@ -106,14 +105,14 @@ program
       };
       globals.json
         ? printJson(result)
-        : printPlain(`Review ${meta.id} completed with ${event.counts.comments} comments`);
+        : printPlain(`Review ${meta.id} submitted with ${event.counts.comments} comments`);
     }
   );
 
 program
   .command('watch')
   .argument('<reviewId>', 'review id')
-  .description('Wait for review.completed for an existing review')
+  .description('Wait for review.submitted for an existing review')
   .option('--timeout <seconds>', 'watch timeout in seconds', Number)
   .action(async (reviewId: string, options: { timeout?: number }) => {
     const globals = program.opts<GlobalOptions>();
@@ -166,10 +165,31 @@ program
   });
 
 program
-  .command('mcp')
-  .description('Start the experimental stdio MCP server')
-  .action(async () => {
-    await startMcpServer();
+  .command('resolve')
+  .argument('<reviewId>', 'review id')
+  .description('Mark a submitted review or one feedback comment as resolved')
+  .option('--comment <commentId>', 'resolve one submitted feedback comment')
+  .option('--summary <text>', 'brief summary of the fixes applied')
+  .action(async (reviewId: string, options: { comment?: string; summary?: string }) => {
+    const globals = program.opts<GlobalOptions>();
+    const info = await ensureServer();
+    const client = new ServerClient(serverUrl(info));
+    const result = options.comment
+      ? await client.resolveComment(reviewId, options.comment, options.summary)
+      : await client.markResolved(reviewId, options.summary);
+    if (globals.json) {
+      printJson({
+        commentId: options.comment ?? null,
+        summary: options.summary ?? null,
+        ...result
+      });
+      return;
+    }
+    printPlain(
+      options.comment
+        ? `Comment ${options.comment} resolved in review ${reviewId}`
+        : `Review ${reviewId} resolved`
+    );
   });
 
 program

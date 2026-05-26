@@ -15,10 +15,10 @@ verifiable, and scoped to the v0.1 flow unless the user asks otherwise.
 
 ## Architecture
 
-- CLI, server, MCP, and shared code are TypeScript under `src/`.
+- CLI, server, web UI, and shared code are TypeScript under `src/`.
 - React/Vite web UI lives under `src/web/`.
 - Background server state is written to `~/.gloss/server.json` by default.
-- Review feedback is persisted under `<repo>/.gloss/reviews/<reviewId>/`.
+- Review artifacts are persisted under `~/.gloss/reviews/<reviewId>/`.
 - Keep shared API/data shapes in `src/shared/types.ts`.
 
 ## Workflow

@@ -3,8 +3,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { globalReviewDir, globalReviewFeedbackFile } from '../shared/paths';
-import type { Comment, DiffPayload, OpenResult, ReviewMeta } from '../shared/types';
+import {
+  globalReviewDir,
+  globalReviewFeedbackFile,
+  globalReviewResolvedFile
+} from '../shared/paths';
+import type {
+  Comment,
+  DiffPayload,
+  OpenResult,
+  ResolveResult,
+  ReviewMeta,
+  ReviewRecord
+} from '../shared/types';
 
 const originalStateDir = process.env.GLOSS_STATE_DIR;
 let tempDirs: string[] = [];
@@ -67,9 +78,172 @@ describe('Gloss review API global persistence', () => {
     const eventsText = await eventsResponse.text();
 
     expect(list.reviews.map((review) => review.id)).toEqual([created.meta.id]);
-    expect(list.reviews[0]?.status).toBe('completed');
-    expect(eventsText).toContain('"type":"review.completed"');
+    expect(list.reviews[0]?.status).toBe('submitted');
+    expect(eventsText).toContain('"type":"review.submitted"');
     expect(eventsText).toContain(`"reviewId":"${created.meta.id}"`);
+  });
+
+  it('rejects submitting a submitted or resolved review', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeDiff(repoRoot))
+    });
+    const created = (await createdResponse.json()) as {
+      meta: ReviewMeta;
+      url: string;
+    };
+
+    const firstSubmitResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+    const submittedAgainResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+
+    expect(firstSubmitResponse.status).toBe(200);
+    expect(submittedAgainResponse.status).toBe(409);
+
+    await app.request(`/api/reviews/${created.meta.id}/resolved`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ summary: 'fixed locally' })
+    });
+    const resolvedSubmitResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+
+    expect(resolvedSubmitResponse.status).toBe(409);
+  });
+
+  it('resolves and reopens individual comments through the API', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeDiff(repoRoot))
+    });
+    const created = (await createdResponse.json()) as {
+      meta: ReviewMeta;
+      url: string;
+    };
+
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment('comment-1'), makeComment('comment-2')] })
+    });
+
+    const partialResponse = await app.request(
+      `/api/reviews/${created.meta.id}/comments/comment-1/resolved`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ summary: 'fixed first comment' })
+      }
+    );
+    const partial = (await partialResponse.json()) as ResolveResult;
+
+    expect(partialResponse.status).toBe(200);
+    expect(partial).toMatchObject({
+      ok: true,
+      reviewId: created.meta.id,
+      status: 'submitted',
+      resolutionStatus: 'partial',
+      comments: { total: 2, resolved: 1, open: 1 },
+      path: globalReviewResolvedFile(created.meta.id)
+    });
+
+    const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
+    const hydrated = (await hydratedResponse.json()) as ReviewRecord;
+
+    expect(hydrated.meta.status).toBe('submitted');
+    expect(hydrated.resolution?.comments).toMatchObject([
+      { commentId: 'comment-1', summary: 'fixed first comment' }
+    ]);
+
+    const completeResponse = await app.request(
+      `/api/reviews/${created.meta.id}/comments/comment-2/resolved`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({})
+      }
+    );
+    const complete = (await completeResponse.json()) as ResolveResult;
+
+    expect(complete).toMatchObject({
+      status: 'resolved',
+      resolutionStatus: 'resolved',
+      comments: { total: 2, resolved: 2, open: 0 }
+    });
+
+    const reopenResponse = await app.request(
+      `/api/reviews/${created.meta.id}/comments/comment-1/resolved`,
+      { method: 'DELETE' }
+    );
+    const reopened = (await reopenResponse.json()) as ResolveResult;
+
+    expect(reopened).toMatchObject({
+      status: 'submitted',
+      resolutionStatus: 'partial',
+      comments: { total: 2, resolved: 1, open: 1 }
+    });
+  });
+
+  it('rejects invalid comment IDs and pending review comment resolution', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeDiff(repoRoot))
+    });
+    const created = (await createdResponse.json()) as {
+      meta: ReviewMeta;
+      url: string;
+    };
+
+    const pendingResolveResponse = await app.request(
+      `/api/reviews/${created.meta.id}/comments/comment-1/resolved`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({})
+      }
+    );
+    expect(pendingResolveResponse.status).toBe(409);
+
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment('comment-1')] })
+    });
+
+    const missingResolveResponse = await app.request(
+      `/api/reviews/${created.meta.id}/comments/missing-comment/resolved`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({})
+      }
+    );
+    const missingReopenResponse = await app.request(
+      `/api/reviews/${created.meta.id}/comments/missing-comment/resolved`,
+      { method: 'DELETE' }
+    );
+
+    expect(missingResolveResponse.status).toBe(404);
+    expect(missingReopenResponse.status).toBe(404);
   });
 });
 
@@ -121,9 +295,9 @@ function makeDiff(cwd: string): DiffPayload {
   };
 }
 
-function makeComment(): Comment {
+function makeComment(id = 'comment-1'): Comment {
   return {
-    id: 'comment-1',
+    id,
     filePath: 'api.ts',
     startLine: 1,
     endLine: 1,
