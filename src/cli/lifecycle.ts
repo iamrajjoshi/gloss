@@ -32,7 +32,7 @@ export async function isServerResponsive(info: ServerInfo): Promise<boolean> {
   }
   try {
     const health = await new ServerClient(serverUrl(info)).health();
-    return health.ok === true;
+    return health.ok === true && health.version === packageVersion;
   } catch {
     return false;
   }
