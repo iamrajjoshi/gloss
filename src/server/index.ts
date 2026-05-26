@@ -8,6 +8,7 @@ import type { Comment, DiffPayload, ReviewEvent } from '../shared/types';
 import { reviewStore } from './store';
 
 const webRoot = fileURLToPath(new URL('../web', import.meta.url));
+const eventStreamHeartbeatMs = 15_000;
 
 const mimeTypes: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -67,14 +68,40 @@ export function createApp(origin: string): Hono {
     let cleanup: (() => void) | null = null;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
+        let closed = false;
+        let heartbeat: ReturnType<typeof setInterval> | null = null;
+        const write = (chunk: string) => {
+          if (!closed) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+        };
+        const close = () => {
+          if (closed) {
+            return;
+          }
+          closed = true;
+          if (heartbeat) {
+            clearInterval(heartbeat);
+          }
+          cleanup?.();
+        };
         const send = (event: ReviewEvent) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          write(`data: ${JSON.stringify(event)}\n\n`);
           if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
-            cleanup?.();
+            close();
             controller.close();
           }
         };
-        cleanup = reviewStore.subscribe(id, send);
+        const unsubscribe = reviewStore.subscribe(id, send);
+        heartbeat = setInterval(() => {
+          write(`: keep-alive ${Date.now()}\n\n`);
+        }, eventStreamHeartbeatMs);
+        cleanup = () => {
+          if (heartbeat) {
+            clearInterval(heartbeat);
+          }
+          unsubscribe();
+        };
         send({ type: 'review.opened', reviewId: id });
         if (
           (record.meta.status === 'submitted' || record.meta.status === 'resolved') &&
@@ -97,9 +124,10 @@ export function createApp(origin: string): Hono {
 
     return new Response(stream, {
       headers: {
-        'cache-control': 'no-cache',
+        'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
-        'content-type': 'text/event-stream'
+        'content-type': 'text/event-stream',
+        'x-accel-buffering': 'no'
       }
     });
   });
