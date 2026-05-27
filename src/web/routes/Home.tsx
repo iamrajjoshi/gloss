@@ -12,6 +12,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { formatLineRange } from '../../shared/comments';
 
 const installCommand = 'brew install iamrajjoshi/tap/gloss';
 const npmInstallCommand = 'npm install -g getgloss';
@@ -186,10 +187,10 @@ const demoCodeRows: DemoCodeRow[] = [
 
 function labelForSelection(selection: DemoSelection): string {
   if (selection.startLine === selection.endLine) {
-    return `Comment on line ${selection.side}${selection.startLine}`;
+    return `Comment on line ${formatLineRange(selection)}`;
   }
 
-  return `Comment on range ${selection.side}${Math.min(selection.startLine, selection.endLine)}-${selection.side}${Math.max(selection.startLine, selection.endLine)}`;
+  return `Comment on range ${formatLineRange(selection)}`;
 }
 
 function createDemoComment(body: string, selection: DemoSelection): DemoComment {
@@ -269,7 +270,7 @@ function HeroDiffScene() {
         {
           reviewId: '01KS5...',
           comments: comments.map((comment) => ({
-            filePath: 'src/web/routes/MarketingHome.tsx',
+            filePath: 'src/web/routes/Home.tsx',
             side: comment.side,
             startLine: comment.startLine,
             endLine: comment.endLine,
@@ -380,7 +381,7 @@ function HeroDiffScene() {
         <div className="scene-terminal">
           <div className="terminal-header">
             <Terminal size={14} />
-            <span>{submitted ? 'Claude Code' : 'agent terminal'}</span>
+            <span>agent terminal</span>
           </div>
           <div className="terminal-lines">
             {terminalLines.map((line) => (
@@ -395,7 +396,7 @@ function HeroDiffScene() {
           <button className="scene-file-header" type="button">
             <ChevronDown size={16} />
             <Code2 size={15} />
-            <span>src/web/routes/MarketingHome.tsx</span>
+            <span>src/web/routes/Home.tsx</span>
             <b className="scene-add">+74</b>
             <b className="scene-del">-6</b>
           </button>
@@ -406,7 +407,7 @@ function HeroDiffScene() {
           >
             {expanded ? 'Hide unchanged context' : '194 unmodified lines'}
           </button>
-          <div className="scene-hunk">@@ -38,11 +38,20 @@ export function MarketingHome()</div>
+          <div className="scene-hunk">@@ -38,11 +38,20 @@ export function Home()</div>
           {visibleDemoRows.map((row) => {
             const rowLine = row.side === 'L' ? row.oldLine : row.newLine;
             if (rowLine == null) {
@@ -435,7 +436,7 @@ function HeroDiffScene() {
                 {submitted && row.key === 'apply-feedback' ? (
                   <div className="scene-applied-status">
                     <Check size={13} />
-                    <span>applied by Claude Code</span>
+                    <span>applied by agent</span>
                   </div>
                 ) : null}
                 {renderLineComments(row.side, rowLine)}
@@ -481,7 +482,7 @@ function HeroDiffScene() {
             <>
               <div className="feedback-title">
                 <Terminal size={15} />
-                <span>Claude Code is updating</span>
+                <span>agent is updating</span>
               </div>
               <div className="agent-update-card">
                 <code>~/.gloss/reviews/01KS5/feedback.json</code>
@@ -512,7 +513,7 @@ function HeroDiffScene() {
           {comments.length === 0
             ? 'No local comments yet'
             : submitted
-              ? 'Sent to Claude Code'
+              ? 'Sent to agent'
               : `${comments.length} local comment${comments.length === 1 ? '' : 's'} ready`}
         </span>
         <button
@@ -521,7 +522,7 @@ function HeroDiffScene() {
           onClick={() => setSubmitState('submitted')}
         >
           {submitted ? <Check size={14} /> : <Play size={14} />}
-          {submitted ? 'Sent to Claude Code' : 'Submit review'}
+          {submitted ? 'Sent to agent' : 'Submit review'}
         </button>
       </div>
     </section>
@@ -575,7 +576,7 @@ function DemoVideoSection() {
   );
 }
 
-export function MarketingHome() {
+export function Home() {
   return (
     <main className="marketing-page">
       <section className="marketing-hero">
@@ -605,13 +606,6 @@ export function MarketingHome() {
             <code>{npxCommand}</code>
             <CopyButton value={npxCommand} label="Copy command" />
           </aside>
-        </div>
-        <div className="demo-interaction-hint">
-          <MessageSquare size={16} />
-          <span>
-            <strong>Try it now:</strong> Click a changed line to leave a comment, then submit the
-            review.
-          </span>
         </div>
         <HeroDiffScene />
       </section>

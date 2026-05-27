@@ -1,12 +1,6 @@
-import type { Comment, FeedbackBundle } from './types';
-
-function formatLineRange(comment: Comment): string {
-  const prefix = comment.side;
-  if (comment.startLine === comment.endLine) {
-    return `${prefix}${comment.startLine}`;
-  }
-  return `${prefix}${comment.startLine}-${prefix}${comment.endLine}`;
-}
+import { compareCommentsByLocation, formatLineRange } from './comments';
+import { languageForPath } from './language';
+import type { FeedbackBundle } from './types';
 
 function fenceFor(snippet: string): string {
   let fence = '```';
@@ -16,51 +10,17 @@ function fenceFor(snippet: string): string {
   return fence;
 }
 
-function languageForPath(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase();
-  const map: Record<string, string> = {
-    cjs: 'js',
-    css: 'css',
-    go: 'go',
-    html: 'html',
-    js: 'js',
-    json: 'json',
-    jsx: 'jsx',
-    md: 'markdown',
-    mjs: 'js',
-    py: 'python',
-    rb: 'ruby',
-    rs: 'rust',
-    sh: 'bash',
-    swift: 'swift',
-    ts: 'ts',
-    tsx: 'tsx',
-    yaml: 'yaml',
-    yml: 'yaml'
-  };
-  return ext ? (map[ext] ?? ext) : '';
-}
-
 function languageForSnippet(filePath: string, snippet: string): string {
   const lines = snippet.split('\n').filter((line) => line.length > 0);
   const looksLikeUnifiedDiff =
     lines.length > 0 &&
     lines.some((line) => line.startsWith('+') || line.startsWith('-')) &&
     lines.every((line) => line.startsWith('+') || line.startsWith('-') || line.startsWith(' '));
-  return looksLikeUnifiedDiff ? 'diff' : languageForPath(filePath);
-}
-
-function byFileThenLine(a: Comment, b: Comment): number {
-  return (
-    a.filePath.localeCompare(b.filePath) ||
-    a.startLine - b.startLine ||
-    a.endLine - b.endLine ||
-    a.side.localeCompare(b.side)
-  );
+  return looksLikeUnifiedDiff ? 'diff' : (languageForPath(filePath) ?? '');
 }
 
 export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
-  const comments = [...bundle.comments].sort(byFileThenLine);
+  const comments = [...bundle.comments].sort(compareCommentsByLocation);
   const files = [...new Set(comments.map((comment) => comment.filePath))];
   const lines: string[] = [
     `# Gloss feedback - ${bundle.timestamp}`,

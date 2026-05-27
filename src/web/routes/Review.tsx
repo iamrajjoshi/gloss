@@ -1,6 +1,9 @@
 import { CheckCircle2, GitBranch, LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import type { ReviewEvent, ReviewRecord } from '../../shared/types';
+import { reviewResolutionCounts } from '../../shared/comments';
+import { isResolvableReviewStatus } from '../../shared/reviews';
+import type { ReviewRecord } from '../../shared/types';
+import { isReviewEvent, parseJson } from '../../shared/validation';
 import { fetchReview } from '../api';
 import { DiffView } from '../components/DiffView';
 import { SubmitBar } from '../components/SubmitBar';
@@ -50,7 +53,7 @@ export function Review({ reviewId }: { reviewId: string }) {
   useEffect(() => {
     const events = new EventSource(`/api/reviews/${reviewId}/events`);
     events.onmessage = (message) => {
-      const event = JSON.parse(message.data) as ReviewEvent;
+      const event = parseJson(message.data, isReviewEvent, 'review event');
       if (event.type === 'review.submitted' || event.type === 'review.updated') {
         reloadReview().catch((reason) => {
           setError(reason instanceof Error ? reason.message : String(reason));
@@ -87,7 +90,7 @@ export function Review({ reviewId }: { reviewId: string }) {
 
   const scope = record.diff.scope;
   const stats = record.diff.stats;
-  const readOnly = record.meta.status === 'submitted' || record.meta.status === 'resolved';
+  const readOnly = isResolvableReviewStatus(record.meta.status);
 
   return (
     <main className="review-shell">
@@ -152,7 +155,7 @@ function ReviewStateBanner({ record }: { record: ReviewRecord }) {
 
 function stateContent(record: ReviewRecord): { title: string; body: string } | null {
   const status = record.meta.status;
-  const counts = resolutionCounts(record);
+  const counts = reviewResolutionCounts(record);
   const progress =
     counts.total > 0 ? `${counts.resolved} of ${counts.total} comments resolved` : null;
   if (status === 'submitted') {
@@ -171,17 +174,6 @@ function stateContent(record: ReviewRecord): { title: string; body: string } | n
     };
   }
   return null;
-}
-
-function resolutionCounts(record: ReviewRecord): { total: number; resolved: number } {
-  const commentIds = new Set((record.feedback?.comments ?? []).map((comment) => comment.id));
-  const resolved = (record.resolution?.comments ?? []).filter((comment) =>
-    commentIds.has(comment.commentId)
-  ).length;
-  return {
-    total: commentIds.size,
-    resolved
-  };
 }
 
 function formatTimestamp(timestamp: string): string {

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ReviewStore } from '../server/store';
-import type { Comment, DiffPayload, ServerInfo } from '../shared/types';
+import type { ServerInfo } from '../shared/types';
+import { makeComment, makeDiff } from '../test/factories';
 import { listReviewsForStatus } from './status';
 
 const originalStateDir = process.env.GLOSS_STATE_DIR;
@@ -53,64 +54,3 @@ describe('listReviewsForStatus', () => {
     expect(existsSync(path.join(repoRoot, '.gloss'))).toBe(false);
   });
 });
-
-function makeDiff(cwd: string): DiffPayload {
-  return {
-    base: { ref: 'HEAD', sha: 'abc1234' },
-    branch: 'raj--gloss--status',
-    cwd,
-    scope: {
-      mode: 'working',
-      requestedBase: null,
-      base: { ref: 'HEAD', sha: 'abc1234' },
-      comparison: { ref: 'working tree', sha: null },
-      fallbackReason: null
-    },
-    stats: { files: 1, additions: 1, deletions: 0 },
-    rawDiff: 'diff --git a/status.ts b/status.ts\n+export const status = true;\n',
-    files: [
-      {
-        path: 'status.ts',
-        oldPath: null,
-        additions: 1,
-        deletions: 0,
-        isBinary: false,
-        isDeleted: false,
-        isNew: false,
-        isRenamed: false,
-        language: 'ts',
-        hunks: [
-          {
-            oldStart: 1,
-            oldLines: 0,
-            newStart: 1,
-            newLines: 1,
-            header: '@@ -0,0 +1 @@',
-            lines: [
-              {
-                type: 'add',
-                oldLine: null,
-                newLine: 1,
-                content: 'export const status = true;'
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    capturedAt: '2026-05-22T12:00:00.000Z'
-  };
-}
-
-function makeComment(): Comment {
-  return {
-    id: 'comment-1',
-    filePath: 'status.ts',
-    startLine: 1,
-    endLine: 1,
-    side: 'R',
-    body: 'Use the durable status store.',
-    originalSnippet: 'export const status = true;',
-    createdAt: '2026-05-22T12:00:01.000Z'
-  };
-}

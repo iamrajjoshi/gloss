@@ -2,7 +2,7 @@ import { ulid } from 'ulid';
 import { create } from 'zustand';
 import type { Comment, ResolutionBundle, Side } from '../shared/types';
 
-export interface DraftComment {
+interface DraftComment {
   filePath: string;
   side: Side;
   startLine: number;

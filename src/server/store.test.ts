@@ -1,14 +1,16 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   globalReviewFeedbackFile,
   globalReviewMarkdownFile,
+  globalReviewMetaFile,
   globalReviewResolvedFile
 } from '../shared/paths';
-import type { Comment, DiffPayload } from '../shared/types';
+import { isResolutionBundle, parseJson } from '../shared/validation';
+import { makeComment, makeDiff } from '../test/factories';
 import { ReviewStore } from './store';
 
 const originalStateDir = process.env.GLOSS_STATE_DIR;
@@ -34,7 +36,7 @@ afterEach(async () => {
 describe('ReviewStore global persistence', () => {
   it('stores reviews globally without writing repo-local artifacts', async () => {
     const store = new ReviewStore();
-    const record = await store.create(makeDiff(repoRoot));
+    const record = await store.create(makeStoreDiff());
 
     expect(existsSync(path.join(repoRoot, '.gloss'))).toBe(false);
     expect(existsSync(record.meta.artifactDir)).toBe(true);
@@ -65,11 +67,11 @@ describe('ReviewStore global persistence', () => {
     const result = await reloaded.markResolved(record.meta.id, 'fixed locally');
     const resolvedPath = result.path;
     const resolved = await reloaded.get(record.meta.id);
-    const resolvedPayload = JSON.parse(await readFile(resolvedPath, 'utf8')) as {
-      status: string;
-      summary: string;
-      comments: Array<{ commentId: string; status: string }>;
-    };
+    const resolvedPayload = parseJson(
+      await readFile(resolvedPath, 'utf8'),
+      isResolutionBundle,
+      'review resolution'
+    );
 
     expect(resolvedPath).toBe(globalReviewResolvedFile(record.meta.id));
     expect(resolved?.meta.status).toBe('resolved');
@@ -85,16 +87,19 @@ describe('ReviewStore global persistence', () => {
 
   it('tracks comment-level resolution progress separately from submitted feedback', async () => {
     const store = new ReviewStore();
-    const record = await store.create(makeDiff(repoRoot));
-    await store.submit(record.meta.id, [makeComment('comment-1'), makeComment('comment-2')]);
+    const record = await store.create(makeStoreDiff());
+    await store.submit(record.meta.id, [
+      makeComment({ id: 'comment-1' }),
+      makeComment({ id: 'comment-2' })
+    ]);
 
     const partial = await store.resolveComment(record.meta.id, 'comment-1', 'fixed first item');
     const partiallyResolved = await store.get(record.meta.id);
-    const partialPayload = JSON.parse(await readFile(partial.path, 'utf8')) as {
-      status: string;
-      summary: string | null;
-      comments: Array<{ commentId: string; summary?: string }>;
-    };
+    const partialPayload = parseJson(
+      await readFile(partial.path, 'utf8'),
+      isResolutionBundle,
+      'review resolution'
+    );
 
     expect(partial).toMatchObject({
       status: 'submitted',
@@ -137,7 +142,7 @@ describe('ReviewStore global persistence', () => {
 
   it('rejects invalid comment IDs and pending review resolution', async () => {
     const store = new ReviewStore();
-    const pending = await store.create(makeDiff(repoRoot));
+    const pending = await store.create(makeStoreDiff());
 
     await expect(store.markResolved(pending.meta.id, 'too early')).rejects.toThrow(
       /cannot be resolved/
@@ -146,7 +151,7 @@ describe('ReviewStore global persistence', () => {
       /cannot be resolved/
     );
 
-    await store.submit(pending.meta.id, [makeComment('comment-1')]);
+    await store.submit(pending.meta.id, [makeComment({ id: 'comment-1' })]);
 
     await expect(store.resolveComment(pending.meta.id, 'missing-comment')).rejects.toThrow(
       /not found/
@@ -158,7 +163,7 @@ describe('ReviewStore global persistence', () => {
 
   it('reloads pending reviews from the global store', async () => {
     const store = new ReviewStore();
-    const record = await store.create(makeDiff(repoRoot));
+    const record = await store.create(makeStoreDiff());
 
     const reloaded = new ReviewStore();
     const loaded = await reloaded.get(record.meta.id);
@@ -167,65 +172,18 @@ describe('ReviewStore global persistence', () => {
     expect(loaded?.diff.cwd).toBe(repoRoot);
     expect(await reloaded.list()).toHaveLength(1);
   });
+
+  it('surfaces invalid persisted review metadata instead of hiding the review', async () => {
+    const store = new ReviewStore();
+    const record = await store.create(makeStoreDiff());
+    await writeFile(globalReviewMetaFile(record.meta.id), '{invalid json\n');
+
+    const reloaded = new ReviewStore();
+
+    await expect(reloaded.list()).rejects.toThrow(/Invalid review metadata/);
+  });
 });
 
-function makeDiff(cwd: string): DiffPayload {
-  return {
-    base: { ref: 'HEAD', sha: 'abc1234' },
-    branch: 'raj--gloss--global-store',
-    cwd,
-    scope: {
-      mode: 'working',
-      requestedBase: null,
-      base: { ref: 'HEAD', sha: 'abc1234' },
-      comparison: { ref: 'working tree', sha: null },
-      fallbackReason: null
-    },
-    stats: { files: 1, additions: 1, deletions: 0 },
-    rawDiff: 'diff --git a/app.ts b/app.ts\n+export const value = 1;\n',
-    files: [
-      {
-        path: 'app.ts',
-        oldPath: null,
-        additions: 1,
-        deletions: 0,
-        isBinary: false,
-        isDeleted: false,
-        isNew: false,
-        isRenamed: false,
-        language: 'ts',
-        hunks: [
-          {
-            oldStart: 1,
-            oldLines: 0,
-            newStart: 1,
-            newLines: 1,
-            header: '@@ -0,0 +1 @@',
-            lines: [
-              {
-                type: 'add',
-                oldLine: null,
-                newLine: 1,
-                content: 'export const value = 1;'
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    capturedAt: '2026-05-22T12:00:00.000Z'
-  };
-}
-
-function makeComment(id = 'comment-1'): Comment {
-  return {
-    id,
-    filePath: 'app.ts',
-    startLine: 1,
-    endLine: 1,
-    side: 'R',
-    body: 'Looks good.',
-    originalSnippet: 'export const value = 1;',
-    createdAt: '2026-05-22T12:00:01.000Z'
-  };
+function makeStoreDiff() {
+  return makeDiff({ cwd: repoRoot, branch: 'raj--gloss--global-store' });
 }

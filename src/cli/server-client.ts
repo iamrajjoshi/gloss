@@ -1,39 +1,62 @@
 import type {
   Comment,
+  CreateReviewResponse,
   DiffPayload,
   FeedbackBundle,
+  HealthResponse,
+  ListReviewsResponse,
   OpenResult,
+  ResolutionRequest,
   ResolveResult,
   ReviewEvent,
-  ReviewMeta,
-  ReviewRecord
+  ReviewRecord,
+  SubmitReviewRequest
 } from '../shared/types';
+import {
+  isCreateReviewResponse,
+  isFeedbackBundle,
+  isHealthResponse,
+  isListReviewsResponse,
+  isOpenResult,
+  isResolveResult,
+  isReviewEvent,
+  isReviewRecord,
+  type JsonGuard,
+  parseJson,
+  parseJsonValue
+} from '../shared/validation';
 
 export class ServerClient {
   constructor(private readonly baseUrl: string) {}
 
-  async health(): Promise<{ ok: boolean; version: string; activeReviews: number }> {
-    return this.get('/api/health');
+  async health(): Promise<HealthResponse> {
+    return this.get('/api/health', isHealthResponse, 'health response');
   }
 
-  async createReview(diff: DiffPayload): Promise<{ meta: ReviewMeta; url: string }> {
-    return this.post('/api/reviews', diff);
+  async createReview(diff: DiffPayload): Promise<CreateReviewResponse> {
+    return this.post('/api/reviews', diff, isCreateReviewResponse, 'create review response');
   }
 
   async getReview(reviewId: string): Promise<ReviewRecord> {
-    return this.get(`/api/reviews/${reviewId}`);
+    return this.get(`/api/reviews/${reviewId}`, isReviewRecord, 'review response');
   }
 
-  async listReviews(): Promise<{ reviews: ReviewMeta[] }> {
-    return this.get('/api/reviews');
+  async listReviews(): Promise<ListReviewsResponse> {
+    return this.get('/api/reviews', isListReviewsResponse, 'review list response');
   }
 
   async getFeedback(reviewId: string): Promise<FeedbackBundle> {
-    return this.get(`/api/reviews/${reviewId}/feedback`);
+    return this.get(`/api/reviews/${reviewId}/feedback`, isFeedbackBundle, 'feedback response');
   }
 
   async markResolved(reviewId: string, summary?: string): Promise<ResolveResult> {
-    return this.post(`/api/reviews/${reviewId}/resolved`, { summary });
+    const request: ResolutionRequest = { summary };
+    return this.post(
+      `/api/reviews/${reviewId}/resolved`,
+      request,
+      isResolveResult,
+      'resolve response'
+    );
   }
 
   async resolveComment(
@@ -41,15 +64,31 @@ export class ServerClient {
     commentId: string,
     summary?: string
   ): Promise<ResolveResult> {
-    return this.post(`/api/reviews/${reviewId}/comments/${commentId}/resolved`, { summary });
+    const request: ResolutionRequest = { summary };
+    return this.post(
+      `/api/reviews/${reviewId}/comments/${commentId}/resolved`,
+      request,
+      isResolveResult,
+      'resolve comment response'
+    );
   }
 
   async reopenComment(reviewId: string, commentId: string): Promise<ResolveResult> {
-    return this.delete(`/api/reviews/${reviewId}/comments/${commentId}/resolved`);
+    return this.delete(
+      `/api/reviews/${reviewId}/comments/${commentId}/resolved`,
+      isResolveResult,
+      'reopen comment response'
+    );
   }
 
   async submitReview(reviewId: string, comments: Comment[]): Promise<OpenResult> {
-    return this.post(`/api/reviews/${reviewId}/submit`, { comments });
+    const request: SubmitReviewRequest = { comments };
+    return this.post(
+      `/api/reviews/${reviewId}/submit`,
+      request,
+      isOpenResult,
+      'submit review response'
+    );
   }
 
   async watchReview(reviewId: string, timeoutSeconds?: number): Promise<ReviewEvent> {
@@ -107,7 +146,7 @@ export class ServerClient {
         if (!dataLine) {
           continue;
         }
-        const event = JSON.parse(dataLine.slice(5).trim()) as ReviewEvent;
+        const event = parseJson(dataLine.slice(5).trim(), isReviewEvent, 'review event');
         if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
           await reader.cancel().catch(() => undefined);
           return event;
@@ -116,31 +155,41 @@ export class ServerClient {
     }
   }
 
-  private async get<T>(path: string): Promise<T> {
+  private async get<T>(path: string, guard: JsonGuard<T>, label: string): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`);
-    return parseResponse<T>(response);
+    return parseResponse(response, guard, label);
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T> {
+  private async post<T>(
+    path: string,
+    body: object,
+    guard: JsonGuard<T>,
+    label: string
+  ): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body)
     });
-    return parseResponse<T>(response);
+    return parseResponse(response, guard, label);
   }
 
-  private async delete<T>(path: string): Promise<T> {
+  private async delete<T>(path: string, guard: JsonGuard<T>, label: string): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, { method: 'DELETE' });
-    return parseResponse<T>(response);
+    return parseResponse(response, guard, label);
   }
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
+async function parseResponse<T>(
+  response: Response,
+  guard: JsonGuard<T>,
+  label: string
+): Promise<T> {
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
-  return (await response.json()) as T;
+  const value: unknown = await response.json();
+  return parseJsonValue(value, guard, label);
 }
 
 function isPrematureWatchEnd(error: unknown): boolean {

@@ -1,32 +1,10 @@
-import path from 'node:path';
+import { languageForPath } from '../shared/language';
 import type { DiffFile, DiffHunk, DiffLine } from '../shared/types';
 
 const hunkHeaderPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
 function stripGitPath(input: string): string {
   return input.replace(/^[ab]\//, '');
-}
-
-function languageForPath(filePath: string): string | null {
-  const ext = path.extname(filePath).slice(1).toLowerCase();
-  if (!ext) {
-    return null;
-  }
-  const map: Record<string, string> = {
-    cjs: 'js',
-    mjs: 'js',
-    js: 'js',
-    jsx: 'jsx',
-    ts: 'ts',
-    tsx: 'tsx',
-    py: 'python',
-    rb: 'ruby',
-    sh: 'bash',
-    md: 'markdown',
-    yml: 'yaml',
-    yaml: 'yaml'
-  };
-  return map[ext] ?? ext;
 }
 
 function emptyFile(): DiffFile {

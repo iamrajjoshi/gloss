@@ -24,7 +24,7 @@ interface GlobalOptions {
   noColor?: boolean;
 }
 
-function printJson(value: unknown): void {
+function printJson(value: object): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -155,7 +155,6 @@ program
 program
   .command('stop')
   .description('Stop the managed background server')
-  .option('--all', 'reserved for future multi-server cleanup')
   .action(async () => {
     const globals = program.opts<GlobalOptions>();
     const result = await stopServer();
@@ -224,12 +223,6 @@ program
       ok: info ? await isServerResponsive(info) : false,
       detail: info ? serverUrl(info) : 'not started'
     });
-    checks.push({
-      name: '@pierre/diffs license',
-      ok: true,
-      detail: 'apache-2.0 dependency present'
-    });
-
     if (globals.json) {
       printJson({ checks });
     } else {

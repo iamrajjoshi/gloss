@@ -81,7 +81,7 @@ best available merge-base from upstream, `origin/HEAD`, `origin/main`, or
 `origin/master`.
 
 Use `--base <ref>` when you want an explicit comparison. Explicit base mode
-keeps the old behavior and does not fall back to a branch diff.
+compares only against the requested ref and does not switch to a branch diff.
 
 ## Feedback Files
 
@@ -133,13 +133,3 @@ Required repository secrets:
 
 - `NPM_TOKEN`
 - `HOMEBREW_TAP_GITHUB_TOKEN`
-
-## Attribution
-
-Gloss uses [`@pierre/diffs`](https://www.npmjs.com/package/@pierre/diffs) by
-[The Pierre Computer Company](https://pierre.computer/) for diff parsing and
-rendering integration points, with Gloss-specific browser chrome around the
-local review workflow.
-
-`@pierre/diffs` is licensed under Apache-2.0. Gloss is not affiliated with or
-endorsed by The Pierre Computer Company.

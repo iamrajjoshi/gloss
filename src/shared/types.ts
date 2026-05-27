@@ -48,7 +48,7 @@ export type DiffScopeMode = 'working' | 'branch' | 'explicit';
 
 export type DiffFallbackReason = 'working-tree-clean' | 'missing-branch-base' | null;
 
-export interface DiffRef {
+interface DiffRef {
   ref: string;
   sha: string | null;
 }
@@ -59,7 +59,7 @@ export interface DiffStats {
   deletions: number;
 }
 
-export interface DiffScope {
+interface DiffScope {
   mode: DiffScopeMode;
   requestedBase: string | null;
   base: { ref: string; sha: string };
@@ -101,7 +101,7 @@ export interface FeedbackBundle {
   comments: Comment[];
 }
 
-export type ResolutionStatus = 'partial' | 'resolved';
+type ResolutionStatus = 'partial' | 'resolved';
 
 export interface ResolvedComment {
   commentId: string;
@@ -176,4 +176,27 @@ export interface OpenResult {
   feedbackPath?: string;
   markdownPath?: string;
   artifactDir?: string;
+}
+
+export interface HealthResponse {
+  ok: boolean;
+  version: string;
+  activeReviews: number;
+}
+
+export interface CreateReviewResponse {
+  meta: ReviewMeta;
+  url: string;
+}
+
+export interface ListReviewsResponse {
+  reviews: ReviewMeta[];
+}
+
+export interface SubmitReviewRequest {
+  comments: Comment[];
+}
+
+export interface ResolutionRequest {
+  summary?: string;
 }

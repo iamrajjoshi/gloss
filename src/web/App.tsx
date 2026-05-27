@@ -1,4 +1,4 @@
-import { MarketingHome } from './routes/MarketingHome';
+import { Home } from './routes/Home';
 import { Review } from './routes/Review';
 import { SetupPage } from './routes/SetupPage';
 
@@ -9,7 +9,7 @@ export function App() {
 
   const reviewMatch = /^\/review\/([^/]+)/.exec(window.location.pathname);
   if (!reviewMatch) {
-    return <MarketingHome />;
+    return <Home />;
   }
 
   return <Review reviewId={reviewMatch[1]} />;
