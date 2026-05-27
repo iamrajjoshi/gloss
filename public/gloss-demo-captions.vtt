@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:15.000
+Gloss opens the working tree diff in a local browser review.
+
+00:00:15.000 --> 00:00:35.000
+The reviewer scans the changed files and leaves comments on the diff.
+
+00:00:35.000 --> 00:00:55.000
+Gloss keeps the agent waiting while the browser review is in progress.
+
+00:00:55.000 --> 00:01:20.000
+Submitted feedback is written back to the local review files for the agent.
+
+00:01:20.000 --> 00:01:53.727
+The agent can read the comments, apply the requested fixes, and validate the result.

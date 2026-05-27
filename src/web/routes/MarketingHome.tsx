@@ -540,6 +540,41 @@ function WorkflowStep({ step, title, body }: { step: string; title: string; body
   );
 }
 
+function DemoVideoSection() {
+  return (
+    <section className="marketing-band demo-video-band" id="demo">
+      <div className="demo-video-header">
+        <div className="section-heading">
+          <p>Demo</p>
+          <h2>Watch the local review loop run for real.</h2>
+        </div>
+        <p className="demo-video-caption">
+          A real pass through the loop: open a local diff, leave review comments, hand them back to
+          the agent.
+        </p>
+      </div>
+      <div className="demo-video-frame">
+        <video
+          aria-label="Gloss product walkthrough showing local diff review comments sent back to an agent"
+          controls
+          poster="/gloss-demo-poster.jpg"
+          preload="metadata"
+        >
+          <source src="/gloss-demo.mp4" type="video/mp4" />
+          <track
+            default
+            kind="captions"
+            label="English"
+            src="/gloss-demo-captions.vtt"
+            srcLang="en"
+          />
+          Your browser does not support the video tag.
+        </video>
+      </div>
+    </section>
+  );
+}
+
 export function MarketingHome() {
   return (
     <main className="marketing-page">
@@ -580,6 +615,8 @@ export function MarketingHome() {
         </div>
         <HeroDiffScene />
       </section>
+
+      <DemoVideoSection />
 
       <section className="marketing-band install-band" id="install">
         <div className="section-heading">
