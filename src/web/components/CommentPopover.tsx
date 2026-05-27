@@ -1,5 +1,6 @@
 import { MessageSquarePlus } from 'lucide-react';
 import { useState } from 'react';
+import { formatLineRange } from '../../shared/comments';
 import type { DiffLineType } from '../../shared/types';
 import { useReviewStore } from '../store';
 
@@ -15,8 +16,8 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
 
   const label =
     draft.startLine === draft.endLine
-      ? `Comment on line ${draft.side}${draft.startLine}`
-      : `Comment on range ${draft.side}${Math.min(draft.startLine, draft.endLine)}-${draft.side}${Math.max(draft.startLine, draft.endLine)}`;
+      ? `Comment on line ${formatLineRange(draft)}`
+      : `Comment on range ${formatLineRange(draft)}`;
   const cancelDraft = () => {
     setBody('');
     setDraft(null);

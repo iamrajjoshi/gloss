@@ -4,8 +4,25 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { globalReviewDir, packageVersion } from '../shared/paths';
-import type { Comment, DiffPayload, ReviewEvent } from '../shared/types';
+import { countCommentFiles } from '../shared/comments';
+import { packageVersion } from '../shared/paths';
+import { isResolvableReviewStatus } from '../shared/reviews';
+import type {
+  CreateReviewResponse,
+  HealthResponse,
+  ListReviewsResponse,
+  OpenResult,
+  ResolutionRequest,
+  ReviewEvent,
+  SubmitReviewRequest
+} from '../shared/types';
+import {
+  isDiffPayload,
+  isResolutionRequest,
+  isSubmitReviewRequest,
+  type JsonGuard,
+  parseJsonValue
+} from '../shared/validation';
 import { reviewStore } from './store';
 
 const webRoot = fileURLToPath(new URL('../web', import.meta.url));
@@ -27,19 +44,31 @@ export function createApp(origin: string): Hono {
 
   app.get('/api/health', async (c) => {
     const reviews = await reviewStore.list();
-    return c.json({
+    const response: HealthResponse = {
       ok: true,
       version: packageVersion,
       activeReviews: reviews.filter((review) => review.status === 'pending').length
-    });
+    };
+    return c.json(response);
   });
 
-  app.get('/api/reviews', async (c) => c.json({ reviews: await reviewStore.list() }));
+  app.get('/api/reviews', async (c) => {
+    const response: ListReviewsResponse = { reviews: await reviewStore.list() };
+    return c.json(response);
+  });
 
   app.post('/api/reviews', async (c) => {
-    const diff = (await c.req.json()) as DiffPayload;
+    const parsed = await readJsonBody(c, isDiffPayload, 'review diff');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const diff = parsed.body;
     const record = await reviewStore.create(diff);
-    return c.json({ meta: record.meta, url: `${origin}/review/${record.meta.id}` }, 201);
+    const response: CreateReviewResponse = {
+      meta: record.meta,
+      url: `${origin}/review/${record.meta.id}`
+    };
+    return c.json(response, 201);
   });
 
   app.get('/api/reviews/:id', async (c) => {
@@ -67,7 +96,7 @@ export function createApp(origin: string): Hono {
 
     return streamSSE(c, async (stream) => {
       let closed = false;
-      let pending: Promise<unknown> = Promise.resolve();
+      let pending: Promise<void> = Promise.resolve();
       let cleanup: (() => void) | null = null;
       let close: (() => void) | null = null;
       const closedPromise = new Promise<void>((resolve) => {
@@ -92,7 +121,9 @@ export function createApp(origin: string): Hono {
       };
       const unsubscribe = reviewStore.subscribe(id, send);
       const heartbeat = setInterval(() => {
-        pending = pending.then(() => stream.write(`: keep-alive ${Date.now()}\n\n`));
+        pending = pending.then(async () => {
+          await stream.write(`: keep-alive ${Date.now()}\n\n`);
+        });
         void pending.catch(() => close?.());
       }, eventStreamHeartbeatMs);
       cleanup = () => {
@@ -102,15 +133,12 @@ export function createApp(origin: string): Hono {
       stream.onAbort(() => close?.());
 
       send({ type: 'review.opened', reviewId: id });
-      if (
-        (record.meta.status === 'submitted' || record.meta.status === 'resolved') &&
-        record.feedback
-      ) {
+      if (isResolvableReviewStatus(record.meta.status) && record.feedback) {
         send({
           type: 'review.submitted',
           reviewId: id,
           counts: {
-            files: new Set(record.feedback.comments.map((comment) => comment.filePath)).size,
+            files: countCommentFiles(record.feedback.comments),
             comments: record.feedback.comments.length
           }
         });
@@ -128,20 +156,22 @@ export function createApp(origin: string): Hono {
     if (existing.meta.status !== 'pending') {
       return c.json({ error: `review is ${existing.meta.status} and cannot be submitted` }, 409);
     }
-    const body = (await c.req.json()) as { comments: Comment[] };
-    const { record, feedbackPath, markdownPath } = await reviewStore.submit(
-      id,
-      body.comments ?? []
-    );
-    return c.json({
+    const parsed = await readJsonBody(c, isSubmitReviewRequest, 'submit review request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const body: SubmitReviewRequest = parsed.body;
+    const { record, feedbackPath, markdownPath } = await reviewStore.submit(id, body.comments);
+    const response: OpenResult = {
       reviewId: id,
       url: `${origin}/review/${id}`,
       files: record.diff.files.length,
-      comments: body.comments?.length ?? 0,
+      comments: body.comments.length,
       artifactDir: record.meta.artifactDir,
       feedbackPath,
       markdownPath
-    });
+    };
+    return c.json(response);
   });
 
   app.post('/api/reviews/:id/resolved', async (c) => {
@@ -150,13 +180,17 @@ export function createApp(origin: string): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (existing.meta.status !== 'submitted' && existing.meta.status !== 'resolved') {
+    if (!isResolvableReviewStatus(existing.meta.status)) {
       return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
     }
     if (!existing.feedback) {
       return c.json({ error: 'submitted feedback not found' }, 409);
     }
-    const body = (await c.req.json().catch(() => ({}))) as { summary?: string };
+    const parsed = await readJsonBody(c, isResolutionRequest, 'resolution request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const body: ResolutionRequest = parsed.body;
     return c.json(await reviewStore.markResolved(id, body.summary));
   });
 
@@ -167,13 +201,17 @@ export function createApp(origin: string): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (existing.meta.status !== 'submitted' && existing.meta.status !== 'resolved') {
+    if (!isResolvableReviewStatus(existing.meta.status)) {
       return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
     }
     if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
       return c.json({ error: 'comment not found' }, 404);
     }
-    const body = (await c.req.json().catch(() => ({}))) as { summary?: string };
+    const parsed = await readJsonBody(c, isResolutionRequest, 'resolution request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const body: ResolutionRequest = parsed.body;
     return c.json(await reviewStore.resolveComment(id, commentId, body.summary));
   });
 
@@ -184,7 +222,7 @@ export function createApp(origin: string): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (existing.meta.status !== 'submitted' && existing.meta.status !== 'resolved') {
+    if (!isResolvableReviewStatus(existing.meta.status)) {
       return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
     }
     if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
@@ -248,6 +286,31 @@ function serveRootFile(fileName: string, contentType: string) {
   };
 }
 
-export function getReviewArtifactDir(_cwd: string, reviewId: string): string {
-  return globalReviewDir(reviewId);
+async function readJsonBody<T>(
+  c: Context,
+  guard: JsonGuard<T>,
+  label: string
+): Promise<{ ok: true; body: T } | { ok: false; response: Response }> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch (error) {
+    return {
+      ok: false,
+      response: c.json({ error: `invalid JSON body: ${formatError(error)}` }, 400)
+    };
+  }
+
+  try {
+    return { ok: true, body: parseJsonValue(body, guard, label) };
+  } catch (error) {
+    return {
+      ok: false,
+      response: c.json({ error: formatError(error) }, 400)
+    };
+  }
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

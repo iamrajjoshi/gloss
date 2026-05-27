@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { Comment, ResolutionBundle } from '../shared/types';
+import type { ResolutionBundle } from '../shared/types';
+import { makeComment } from '../test/factories';
 import { useReviewStore } from './store';
 
 beforeEach(() => {
@@ -55,16 +56,3 @@ describe('useReviewStore', () => {
     expect(useReviewStore.getState().draft).toBeNull();
   });
 });
-
-function makeComment(): Comment {
-  return {
-    id: 'comment-1',
-    filePath: 'app.ts',
-    startLine: 4,
-    endLine: 4,
-    side: 'R',
-    body: 'Submitted feedback',
-    originalSnippet: 'export const value = 1;',
-    createdAt: '2026-05-23T12:00:01.000Z'
-  };
-}

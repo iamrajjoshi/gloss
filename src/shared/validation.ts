@@ -1,0 +1,358 @@
+import type {
+  Comment,
+  CreateReviewResponse,
+  DiffFile,
+  DiffHunk,
+  DiffLine,
+  DiffPayload,
+  DiffStats,
+  FeedbackBundle,
+  HealthResponse,
+  ListReviewsResponse,
+  OpenResult,
+  ResolutionBundle,
+  ResolutionRequest,
+  ResolvedComment,
+  ResolveResult,
+  ReviewEvent,
+  ReviewMeta,
+  ReviewRecord,
+  ServerInfo,
+  SubmitReviewRequest
+} from './types';
+
+export type JsonGuard<T> = (value: unknown) => value is T;
+
+export type StoredReviewMeta = Omit<ReviewMeta, 'artifactDir'> &
+  Partial<Pick<ReviewMeta, 'artifactDir' | 'feedbackPath' | 'markdownPath'>>;
+
+const reviewStatuses = ['pending', 'submitted', 'cancelled', 'resolved'] as const;
+const resolutionStatuses = ['partial', 'resolved'] as const;
+const reviewUpdateReasons = ['review-resolved', 'comment-resolved', 'comment-reopened'] as const;
+const sides = ['L', 'R'] as const;
+const diffLineTypes = ['context', 'add', 'delete'] as const;
+const diffScopeModes = ['working', 'branch', 'explicit'] as const;
+const diffFallbackReasons = ['working-tree-clean', 'missing-branch-base'] as const;
+
+export function parseJson<T>(raw: string, guard: JsonGuard<T>, label: string): T {
+  const parsed: unknown = JSON.parse(raw);
+  return parseJsonValue(parsed, guard, label);
+}
+
+export function parseJsonValue<T>(value: unknown, guard: JsonGuard<T>, label: string): T {
+  if (!guard(value)) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
+}
+
+export function isServerInfo(value: unknown): value is ServerInfo {
+  return (
+    isRecord(value) &&
+    isNumber(value.pid) &&
+    isNumber(value.port) &&
+    isString(value.version) &&
+    isString(value.startedAt) &&
+    isString(value.stateDir)
+  );
+}
+
+export function isHealthResponse(value: unknown): value is HealthResponse {
+  return (
+    isRecord(value) &&
+    isBoolean(value.ok) &&
+    isString(value.version) &&
+    isNumber(value.activeReviews)
+  );
+}
+
+export function isCreateReviewResponse(value: unknown): value is CreateReviewResponse {
+  return isRecord(value) && isReviewMeta(value.meta) && isString(value.url);
+}
+
+export function isListReviewsResponse(value: unknown): value is ListReviewsResponse {
+  return isRecord(value) && isArrayOf(value.reviews, isReviewMeta);
+}
+
+export function isOpenResult(value: unknown): value is OpenResult {
+  return (
+    isRecord(value) &&
+    isString(value.reviewId) &&
+    isString(value.url) &&
+    isNumber(value.files) &&
+    isOptionalNumber(value.comments) &&
+    isOptionalString(value.feedbackPath) &&
+    isOptionalString(value.markdownPath) &&
+    isOptionalString(value.artifactDir)
+  );
+}
+
+export function isResolveResult(value: unknown): value is ResolveResult {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isString(value.reviewId) &&
+    isReviewStatus(value.status) &&
+    isResolutionStatus(value.resolutionStatus) &&
+    isResolutionCounts(value.comments) &&
+    isString(value.path) &&
+    isResolutionBundle(value.resolution)
+  );
+}
+
+export function isSubmitReviewRequest(value: unknown): value is SubmitReviewRequest {
+  return isRecord(value) && isArrayOf(value.comments, isComment);
+}
+
+export function isResolutionRequest(value: unknown): value is ResolutionRequest {
+  return isRecord(value) && isOptionalString(value.summary);
+}
+
+export function isReviewRecord(value: unknown): value is ReviewRecord {
+  return (
+    isRecord(value) &&
+    isReviewMeta(value.meta) &&
+    isDiffPayload(value.diff) &&
+    isOptional(value.feedback, isFeedbackBundle) &&
+    isOptional(value.resolution, isResolutionBundle)
+  );
+}
+
+export function isStoredReviewMeta(value: unknown): value is StoredReviewMeta {
+  return (
+    isRecord(value) &&
+    isString(value.id) &&
+    isString(value.cwd) &&
+    isBaseRef(value.base) &&
+    isNullableString(value.branch) &&
+    isReviewStatus(value.status) &&
+    isString(value.createdAt) &&
+    isOptionalString(value.submittedAt) &&
+    isOptionalString(value.resolvedAt) &&
+    isOptionalString(value.artifactDir) &&
+    isOptionalString(value.feedbackPath) &&
+    isOptionalString(value.markdownPath)
+  );
+}
+
+function isReviewMeta(value: unknown): value is ReviewMeta {
+  return isStoredReviewMeta(value) && isString(value.artifactDir);
+}
+
+export function isDiffPayload(value: unknown): value is DiffPayload {
+  return (
+    isRecord(value) &&
+    isBaseRef(value.base) &&
+    isNullableString(value.branch) &&
+    isString(value.cwd) &&
+    isDiffScope(value.scope) &&
+    isDiffStats(value.stats) &&
+    isString(value.rawDiff) &&
+    isArrayOf(value.files, isDiffFile) &&
+    isString(value.capturedAt)
+  );
+}
+
+export function isFeedbackBundle(value: unknown): value is FeedbackBundle {
+  return (
+    isRecord(value) &&
+    value.version === 1 &&
+    isString(value.reviewId) &&
+    isString(value.timestamp) &&
+    isBaseRef(value.base) &&
+    isNullableString(value.branch) &&
+    isArrayOf(value.comments, isComment)
+  );
+}
+
+export function isResolutionBundle(value: unknown): value is ResolutionBundle {
+  return (
+    isRecord(value) &&
+    isString(value.reviewId) &&
+    isResolutionStatus(value.status) &&
+    isNullableString(value.summary) &&
+    isNullableString(value.resolvedAt) &&
+    isArrayOf(value.comments, isResolvedComment)
+  );
+}
+
+export function isReviewEvent(value: unknown): value is ReviewEvent {
+  if (!isRecord(value) || !isString(value.reviewId) || !isString(value.type)) {
+    return false;
+  }
+  switch (value.type) {
+    case 'review.opened':
+    case 'review.cancelled':
+      return true;
+    case 'review.submitted':
+      return (
+        isRecord(value.counts) && isNumber(value.counts.files) && isNumber(value.counts.comments)
+      );
+    case 'review.updated':
+      return (
+        isReviewUpdateReason(value.reason) &&
+        isReviewStatus(value.status) &&
+        isResolutionStatus(value.resolutionStatus) &&
+        isResolutionCounts(value.counts)
+      );
+    default:
+      return false;
+  }
+}
+
+function isDiffScope(value: unknown): value is DiffPayload['scope'] {
+  return (
+    isRecord(value) &&
+    isOneOf(value.mode, diffScopeModes) &&
+    isNullableString(value.requestedBase) &&
+    isBaseRef(value.base) &&
+    isDiffRef(value.comparison) &&
+    (value.fallbackReason === null || isOneOf(value.fallbackReason, diffFallbackReasons))
+  );
+}
+
+function isDiffRef(value: unknown): value is DiffPayload['scope']['comparison'] {
+  return isRecord(value) && isString(value.ref) && isNullableString(value.sha);
+}
+
+function isBaseRef(value: unknown): value is { ref: string; sha: string } {
+  return isRecord(value) && isString(value.ref) && isString(value.sha);
+}
+
+function isDiffStats(value: unknown): value is DiffStats {
+  return (
+    isRecord(value) &&
+    isNumber(value.files) &&
+    isNumber(value.additions) &&
+    isNumber(value.deletions)
+  );
+}
+
+function isDiffFile(value: unknown): value is DiffFile {
+  return (
+    isRecord(value) &&
+    isString(value.path) &&
+    isNullableString(value.oldPath) &&
+    isNumber(value.additions) &&
+    isNumber(value.deletions) &&
+    isBoolean(value.isBinary) &&
+    isBoolean(value.isDeleted) &&
+    isBoolean(value.isNew) &&
+    isBoolean(value.isRenamed) &&
+    isNullableString(value.language) &&
+    isArrayOf(value.hunks, isDiffHunk)
+  );
+}
+
+function isDiffHunk(value: unknown): value is DiffHunk {
+  return (
+    isRecord(value) &&
+    isNumber(value.oldStart) &&
+    isNumber(value.oldLines) &&
+    isNumber(value.newStart) &&
+    isNumber(value.newLines) &&
+    isString(value.header) &&
+    isArrayOf(value.lines, isDiffLine)
+  );
+}
+
+function isDiffLine(value: unknown): value is DiffLine {
+  return (
+    isRecord(value) &&
+    isOneOf(value.type, diffLineTypes) &&
+    isNullableNumber(value.oldLine) &&
+    isNullableNumber(value.newLine) &&
+    isString(value.content)
+  );
+}
+
+function isComment(value: unknown): value is Comment {
+  return (
+    isRecord(value) &&
+    isString(value.id) &&
+    isString(value.filePath) &&
+    isNumber(value.startLine) &&
+    isNumber(value.endLine) &&
+    isOneOf(value.side, sides) &&
+    isString(value.body) &&
+    isString(value.originalSnippet) &&
+    isString(value.createdAt)
+  );
+}
+
+function isResolvedComment(value: unknown): value is ResolvedComment {
+  return (
+    isRecord(value) &&
+    isString(value.commentId) &&
+    value.status === 'resolved' &&
+    isOptionalString(value.summary) &&
+    isString(value.resolvedAt)
+  );
+}
+
+function isResolutionCounts(value: unknown): value is ResolveResult['comments'] {
+  return (
+    isRecord(value) && isNumber(value.total) && isNumber(value.resolved) && isNumber(value.open)
+  );
+}
+
+function isReviewStatus(value: unknown): value is ReviewMeta['status'] {
+  return isOneOf(value, reviewStatuses);
+}
+
+function isResolutionStatus(value: unknown): value is ResolutionBundle['status'] {
+  return isOneOf(value, resolutionStatuses);
+}
+
+function isReviewUpdateReason(
+  value: unknown
+): value is Extract<ReviewEvent, { type: 'review.updated' }>['reason'] {
+  return isOneOf(value, reviewUpdateReasons);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isArrayOf<T>(value: unknown, guard: JsonGuard<T>): value is T[] {
+  return Array.isArray(value) && value.every(guard);
+}
+
+function isOptional<T>(value: unknown, guard: JsonGuard<T>): value is T | undefined {
+  return value === undefined || guard(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || isString(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value);
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || isNumber(value);
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || isNumber(value);
+}
+
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === 'boolean';
+}
+
+function isOneOf<const T extends readonly string[]>(
+  value: unknown,
+  options: T
+): value is T[number] {
+  return typeof value === 'string' && options.includes(value);
+}

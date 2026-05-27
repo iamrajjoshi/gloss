@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ReviewEvent } from '../shared/types';
 import { ServerClient } from './server-client';
 
 afterEach(() => {
@@ -32,9 +33,7 @@ describe('ServerClient.watchReview', () => {
   });
 });
 
-function eventStream(
-  ...chunks: Array<string | { close?: true } | Record<string, unknown>>
-): Response {
+function eventStream(...chunks: Array<string | { close: true } | ReviewEvent>): Response {
   const encoder = new TextEncoder();
   return new Response(
     new ReadableStream<Uint8Array>({

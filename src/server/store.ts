@@ -1,6 +1,8 @@
 import type { Dirent } from 'node:fs';
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { ulid } from 'ulid';
+import { compareCommentsByLocation, countCommentFiles, resolutionCounts } from '../shared/comments';
+import { writeJsonFile } from '../shared/json';
 import { serializeFeedbackMarkdown } from '../shared/markdown';
 import {
   ensureDir,
@@ -12,6 +14,7 @@ import {
   globalReviewResolvedFile,
   globalReviewsDir
 } from '../shared/paths';
+import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
   Comment,
   DiffPayload,
@@ -24,6 +27,14 @@ import type {
   ReviewRecord,
   ReviewUpdateReason
 } from '../shared/types';
+import {
+  isDiffPayload,
+  isFeedbackBundle,
+  isResolutionBundle,
+  isStoredReviewMeta,
+  type JsonGuard,
+  parseJson
+} from '../shared/validation';
 
 type Listener = (event: ReviewEvent) => void;
 
@@ -79,13 +90,7 @@ export class ReviewStore {
       timestamp,
       base: record.diff.base,
       branch: record.diff.branch,
-      comments: [...comments].sort(
-        (a, b) =>
-          a.filePath.localeCompare(b.filePath) ||
-          a.startLine - b.startLine ||
-          a.endLine - b.endLine ||
-          a.side.localeCompare(b.side)
-      )
+      comments: [...comments].sort(compareCommentsByLocation)
     };
     record.feedback = feedback;
     record.meta = { ...record.meta, status: 'submitted', submittedAt: timestamp };
@@ -102,8 +107,8 @@ export class ReviewStore {
     };
     await ensureDir(artifactDir);
     await Promise.all([
-      writeFile(globalReviewMetaFile(id), `${JSON.stringify(record.meta, null, 2)}\n`),
-      writeFile(feedbackPath, `${JSON.stringify(feedback, null, 2)}\n`),
+      writeJsonFile(globalReviewMetaFile(id), record.meta),
+      writeJsonFile(feedbackPath, feedback),
       writeFile(markdownPath, serializeFeedbackMarkdown(feedback))
     ]);
 
@@ -111,7 +116,7 @@ export class ReviewStore {
       type: 'review.submitted',
       reviewId: id,
       counts: {
-        files: new Set(feedback.comments.map((comment) => comment.filePath)).size,
+        files: countCommentFiles(feedback.comments),
         comments: feedback.comments.length
       }
     });
@@ -177,7 +182,7 @@ export class ReviewStore {
       ],
       record
     );
-    const counts = this.resolutionCounts(record, comments);
+    const counts = resolutionCounts(record.feedback, comments);
     const fullyResolved = counts.total === counts.resolved;
     const resolution: ResolutionBundle = {
       reviewId: id,
@@ -204,7 +209,7 @@ export class ReviewStore {
       (record.resolution?.comments ?? []).filter((comment) => comment.commentId !== commentId),
       record
     );
-    const counts = this.resolutionCounts(record, comments);
+    const counts = resolutionCounts(record.feedback, comments);
     const fullyResolved = counts.total > 0 && counts.total === counts.resolved;
     const resolvedAt = fullyResolved ? new Date().toISOString() : null;
     const resolution: ResolutionBundle = {
@@ -242,8 +247,8 @@ export class ReviewStore {
     const dir = globalReviewDir(record.meta.id);
     await ensureDir(dir);
     await Promise.all([
-      writeFile(globalReviewMetaFile(record.meta.id), `${JSON.stringify(record.meta, null, 2)}\n`),
-      writeFile(globalReviewDiffFile(record.meta.id), `${JSON.stringify(record.diff, null, 2)}\n`)
+      writeJsonFile(globalReviewMetaFile(record.meta.id), record.meta),
+      writeJsonFile(globalReviewDiffFile(record.meta.id), record.diff)
     ]);
   }
 
@@ -260,8 +265,16 @@ export class ReviewStore {
     let entries: Dirent[];
     try {
       entries = await readdir(globalReviewsDir(), { withFileTypes: true });
-    } catch {
-      return;
+    } catch (error) {
+      if (isFileNotFound(error)) {
+        return;
+      }
+      throw new Error(
+        `Could not read reviews directory at ${globalReviewsDir()}: ${formatError(error)}`,
+        {
+          cause: error
+        }
+      );
     }
 
     await Promise.all(
@@ -270,46 +283,49 @@ export class ReviewStore {
   }
 
   private async loadReview(id: string): Promise<ReviewRecord | null> {
-    try {
-      const [metaRaw, diffRaw] = await Promise.all([
-        readFile(globalReviewMetaFile(id), 'utf8'),
-        readFile(globalReviewDiffFile(id), 'utf8')
-      ]);
-      const meta = JSON.parse(metaRaw) as ReviewMeta;
-      const diff = JSON.parse(diffRaw) as DiffPayload;
-      let feedback: FeedbackBundle | undefined;
-      let resolution: ResolutionBundle | undefined;
-      try {
-        feedback = JSON.parse(
-          await readFile(globalReviewFeedbackFile(id), 'utf8')
-        ) as FeedbackBundle;
-      } catch {
-        feedback = undefined;
-      }
-      try {
-        resolution = JSON.parse(
-          await readFile(globalReviewResolvedFile(id), 'utf8')
-        ) as ResolutionBundle;
-      } catch {
-        resolution = undefined;
-      }
+    const metaPath = globalReviewMetaFile(id);
+    const diffPath = globalReviewDiffFile(id);
+    let metaRaw: string;
+    let diffRaw: string;
 
-      const record: ReviewRecord = {
-        meta: {
-          ...meta,
-          artifactDir: meta.artifactDir ?? globalReviewDir(id),
-          feedbackPath: meta.feedbackPath ?? (feedback ? globalReviewFeedbackFile(id) : undefined),
-          markdownPath: meta.markdownPath ?? (feedback ? globalReviewMarkdownFile(id) : undefined)
-        },
-        diff,
-        feedback,
-        resolution
-      };
-      this.reviews.set(id, record);
-      return record;
-    } catch {
-      return null;
+    try {
+      [metaRaw, diffRaw] = await Promise.all([
+        readFile(metaPath, 'utf8'),
+        readFile(diffPath, 'utf8')
+      ]);
+    } catch (error) {
+      if (isFileNotFound(error)) {
+        return null;
+      }
+      throw new Error(`Could not load review ${id}: ${formatError(error)}`, { cause: error });
     }
+
+    const meta = parseJsonFile(metaRaw, isStoredReviewMeta, 'review metadata', metaPath);
+    const diff = parseJsonFile(diffRaw, isDiffPayload, 'review diff', diffPath);
+    const feedback = await readOptionalJsonFile(
+      globalReviewFeedbackFile(id),
+      isFeedbackBundle,
+      'review feedback'
+    );
+    const resolution = await readOptionalJsonFile(
+      globalReviewResolvedFile(id),
+      isResolutionBundle,
+      'review resolution'
+    );
+
+    const record: ReviewRecord = {
+      meta: {
+        ...meta,
+        artifactDir: meta.artifactDir ?? globalReviewDir(id),
+        feedbackPath: meta.feedbackPath ?? (feedback ? globalReviewFeedbackFile(id) : undefined),
+        markdownPath: meta.markdownPath ?? (feedback ? globalReviewMarkdownFile(id) : undefined)
+      },
+      diff,
+      feedback,
+      resolution
+    };
+    this.reviews.set(id, record);
+    return record;
   }
 
   private assertResolvable(
@@ -318,7 +334,7 @@ export class ReviewStore {
   ): asserts record is ReviewRecord & {
     feedback: FeedbackBundle;
   } {
-    if (record.meta.status !== 'submitted' && record.meta.status !== 'resolved') {
+    if (!isResolvableReviewStatus(record.meta.status)) {
       throw new Error(`Review ${id} is ${record.meta.status} and cannot be resolved`);
     }
     if (!record.feedback) {
@@ -345,15 +361,15 @@ export class ReviewStore {
     const resolvedPath = globalReviewResolvedFile(record.meta.id);
     await ensureDir(globalReviewDir(record.meta.id));
     await Promise.all([
-      writeFile(resolvedPath, `${JSON.stringify(resolution, null, 2)}\n`),
-      writeFile(globalReviewMetaFile(record.meta.id), `${JSON.stringify(record.meta, null, 2)}\n`)
+      writeJsonFile(resolvedPath, resolution),
+      writeJsonFile(globalReviewMetaFile(record.meta.id), record.meta)
     ]);
     const result: ResolveResult = {
       ok: true,
       reviewId: record.meta.id,
       status: record.meta.status,
       resolutionStatus: resolution.status,
-      comments: this.resolutionCounts(record, resolution.comments),
+      comments: resolutionCounts(record.feedback, resolution.comments),
       path: resolvedPath,
       resolution
     };
@@ -383,26 +399,42 @@ export class ReviewStore {
           (feedbackIndex.get(b.commentId) ?? Number.MAX_SAFE_INTEGER)
       );
   }
+}
 
-  private resolutionCounts(
-    record: ReviewRecord & { feedback: FeedbackBundle },
-    comments: ResolvedComment[]
-  ): { total: number; resolved: number; open: number } {
-    const total = record.feedback.comments.length;
-    const resolvedIds = new Set(comments.map((comment) => comment.commentId));
-    const resolved = record.feedback.comments.filter((comment) =>
-      resolvedIds.has(comment.id)
-    ).length;
-    return {
-      total,
-      resolved,
-      open: total - resolved
-    };
+async function readOptionalJsonFile<T>(
+  filePath: string,
+  guard: JsonGuard<T>,
+  label: string
+): Promise<T | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch (error) {
+    if (isFileNotFound(error)) {
+      return undefined;
+    }
+    throw new Error(`Could not read ${label} at ${filePath}: ${formatError(error)}`, {
+      cause: error
+    });
+  }
+
+  return parseJsonFile(raw, guard, label, filePath);
+}
+
+function parseJsonFile<T>(raw: string, guard: JsonGuard<T>, label: string, filePath: string): T {
+  try {
+    return parseJson(raw, guard, label);
+  } catch (error) {
+    throw new Error(`Invalid ${label} at ${filePath}: ${formatError(error)}`, { cause: error });
   }
 }
 
-export const reviewStore = new ReviewStore();
-
-export async function removeReviewArtifacts(_cwd: string, id: string): Promise<void> {
-  await rm(globalReviewDir(id), { force: true, recursive: true });
+function isFileNotFound(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export const reviewStore = new ReviewStore();

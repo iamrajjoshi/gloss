@@ -1,4 +1,3 @@
-import { parsePatchFiles } from '@pierre/diffs';
 import { CheckCircle2, MessageSquare } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile, DiffLine, ReviewRecord, Side } from '../../shared/types';
@@ -28,17 +27,9 @@ export function DiffView({
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
-  const pierreFiles = useMemo(() => {
-    try {
-      return parsePatchFiles(record.diff.rawDiff, record.meta.id).flatMap((patch) => patch.files)
-        .length;
-    } catch {
-      return 0;
-    }
-  }, [record.diff.rawDiff, record.meta.id]);
 
   return (
-    <section className="diff-stack" data-pierre-files={pierreFiles}>
+    <section className="diff-stack">
       {record.diff.files.length === 0 ? (
         <EmptyDiff record={record} />
       ) : (

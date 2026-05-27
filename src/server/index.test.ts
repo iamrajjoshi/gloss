@@ -8,15 +8,19 @@ import {
   globalReviewFeedbackFile,
   globalReviewResolvedFile
 } from '../shared/paths';
-import type {
-  Comment,
-  DiffPayload,
-  OpenResult,
-  ResolveResult,
-  ReviewEvent,
-  ReviewMeta,
-  ReviewRecord
-} from '../shared/types';
+import type { ReviewEvent } from '../shared/types';
+import {
+  isCreateReviewResponse,
+  isListReviewsResponse,
+  isOpenResult,
+  isResolveResult,
+  isReviewEvent,
+  isReviewRecord,
+  type JsonGuard,
+  parseJson,
+  parseJsonValue
+} from '../shared/validation';
+import { makeComment, makeDiff } from '../test/factories';
 
 const originalStateDir = process.env.GLOSS_STATE_DIR;
 let tempDirs: string[] = [];
@@ -43,17 +47,18 @@ describe('Gloss review API global persistence', () => {
   it('creates, submits, lists, and reloads reviews from global state', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
-    const diff = makeDiff(repoRoot);
+    const diff = makeApiDiff();
 
     const createdResponse = await app.request('/api/reviews', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(diff)
     });
-    const created = (await createdResponse.json()) as {
-      meta: ReviewMeta;
-      url: string;
-    };
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
 
     expect(createdResponse.status).toBe(201);
     expect(created.url).toBe(`http://localhost:4321/review/${created.meta.id}`);
@@ -65,7 +70,7 @@ describe('Gloss review API global persistence', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ comments: [makeComment()] })
     });
-    const submitted = (await submittedResponse.json()) as OpenResult;
+    const submitted = await responseJson(submittedResponse, isOpenResult, 'submit review response');
 
     expect(submitted.artifactDir).toBe(globalReviewDir(created.meta.id));
     expect(submitted.feedbackPath).toBe(globalReviewFeedbackFile(created.meta.id));
@@ -74,7 +79,7 @@ describe('Gloss review API global persistence', () => {
     const { createApp: createReloadedApp } = await import('./index');
     const reloadedApp = createReloadedApp('http://localhost:4321');
     const listResponse = await reloadedApp.request('/api/reviews');
-    const list = (await listResponse.json()) as { reviews: ReviewMeta[] };
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
     const eventsResponse = await reloadedApp.request(`/api/reviews/${created.meta.id}/events`);
     const events = await readReviewEvents(eventsResponse, 2);
 
@@ -92,12 +97,13 @@ describe('Gloss review API global persistence', () => {
     const createdResponse = await app.request('/api/reviews', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(makeDiff(repoRoot))
+      body: JSON.stringify(makeApiDiff())
     });
-    const created = (await createdResponse.json()) as {
-      meta: ReviewMeta;
-      url: string;
-    };
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
 
     const firstSubmitResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
       method: 'POST',
@@ -127,23 +133,56 @@ describe('Gloss review API global persistence', () => {
     expect(resolvedSubmitResponse.status).toBe(409);
   });
 
+  it('rejects malformed JSON request bodies', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+
+    const response = await app.request(`/api/reviews/${created.meta.id}/resolved`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{not-json'
+    });
+    const body = await responseJson(response, isErrorResponse, 'error response');
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/invalid JSON body/);
+  });
+
   it('resolves and reopens individual comments through the API', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const createdResponse = await app.request('/api/reviews', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(makeDiff(repoRoot))
+      body: JSON.stringify(makeApiDiff())
     });
-    const created = (await createdResponse.json()) as {
-      meta: ReviewMeta;
-      url: string;
-    };
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
 
     await app.request(`/api/reviews/${created.meta.id}/submit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ comments: [makeComment('comment-1'), makeComment('comment-2')] })
+      body: JSON.stringify({
+        comments: [makeComment({ id: 'comment-1' }), makeComment({ id: 'comment-2' })]
+      })
     });
 
     const partialResponse = await app.request(
@@ -154,7 +193,7 @@ describe('Gloss review API global persistence', () => {
         body: JSON.stringify({ summary: 'fixed first comment' })
       }
     );
-    const partial = (await partialResponse.json()) as ResolveResult;
+    const partial = await responseJson(partialResponse, isResolveResult, 'resolve response');
 
     expect(partialResponse.status).toBe(200);
     expect(partial).toMatchObject({
@@ -167,7 +206,7 @@ describe('Gloss review API global persistence', () => {
     });
 
     const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
-    const hydrated = (await hydratedResponse.json()) as ReviewRecord;
+    const hydrated = await responseJson(hydratedResponse, isReviewRecord, 'review response');
 
     expect(hydrated.meta.status).toBe('submitted');
     expect(hydrated.resolution?.comments).toMatchObject([
@@ -182,7 +221,7 @@ describe('Gloss review API global persistence', () => {
         body: JSON.stringify({})
       }
     );
-    const complete = (await completeResponse.json()) as ResolveResult;
+    const complete = await responseJson(completeResponse, isResolveResult, 'resolve response');
 
     expect(complete).toMatchObject({
       status: 'resolved',
@@ -194,7 +233,7 @@ describe('Gloss review API global persistence', () => {
       `/api/reviews/${created.meta.id}/comments/comment-1/resolved`,
       { method: 'DELETE' }
     );
-    const reopened = (await reopenResponse.json()) as ResolveResult;
+    const reopened = await responseJson(reopenResponse, isResolveResult, 'resolve response');
 
     expect(reopened).toMatchObject({
       status: 'submitted',
@@ -209,17 +248,20 @@ describe('Gloss review API global persistence', () => {
     const createdResponse = await app.request('/api/reviews', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(makeDiff(repoRoot))
+      body: JSON.stringify(makeApiDiff())
     });
-    const created = (await createdResponse.json()) as {
-      meta: ReviewMeta;
-      url: string;
-    };
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
 
     await app.request(`/api/reviews/${created.meta.id}/submit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ comments: [makeComment('comment-1'), makeComment('comment-2')] })
+      body: JSON.stringify({
+        comments: [makeComment({ id: 'comment-1' }), makeComment({ id: 'comment-2' })]
+      })
     });
 
     const eventsResponse = await app.request(`/api/reviews/${created.meta.id}/events`);
@@ -273,12 +315,13 @@ describe('Gloss review API global persistence', () => {
     const createdResponse = await app.request('/api/reviews', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(makeDiff(repoRoot))
+      body: JSON.stringify(makeApiDiff())
     });
-    const created = (await createdResponse.json()) as {
-      meta: ReviewMeta;
-      url: string;
-    };
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
 
     const pendingResolveResponse = await app.request(
       `/api/reviews/${created.meta.id}/comments/comment-1/resolved`,
@@ -293,7 +336,7 @@ describe('Gloss review API global persistence', () => {
     await app.request(`/api/reviews/${created.meta.id}/submit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ comments: [makeComment('comment-1')] })
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1' })] })
     });
 
     const missingResolveResponse = await app.request(
@@ -314,65 +357,13 @@ describe('Gloss review API global persistence', () => {
   });
 });
 
-function makeDiff(cwd: string): DiffPayload {
-  return {
-    base: { ref: 'HEAD', sha: 'abc1234' },
+function makeApiDiff() {
+  return makeDiff({
     branch: 'raj--gloss--api',
-    cwd,
-    scope: {
-      mode: 'working',
-      requestedBase: null,
-      base: { ref: 'HEAD', sha: 'abc1234' },
-      comparison: { ref: 'working tree', sha: null },
-      fallbackReason: null
-    },
-    stats: { files: 1, additions: 1, deletions: 0 },
-    rawDiff: 'diff --git a/api.ts b/api.ts\n+export const api = true;\n',
-    files: [
-      {
-        path: 'api.ts',
-        oldPath: null,
-        additions: 1,
-        deletions: 0,
-        isBinary: false,
-        isDeleted: false,
-        isNew: false,
-        isRenamed: false,
-        language: 'ts',
-        hunks: [
-          {
-            oldStart: 1,
-            oldLines: 0,
-            newStart: 1,
-            newLines: 1,
-            header: '@@ -0,0 +1 @@',
-            lines: [
-              {
-                type: 'add',
-                oldLine: null,
-                newLine: 1,
-                content: 'export const api = true;'
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    capturedAt: '2026-05-22T12:00:00.000Z'
-  };
-}
-
-function makeComment(id = 'comment-1'): Comment {
-  return {
-    id,
-    filePath: 'api.ts',
-    startLine: 1,
-    endLine: 1,
-    side: 'R',
-    body: 'API feedback',
-    originalSnippet: 'export const api = true;',
-    createdAt: '2026-05-22T12:00:01.000Z'
-  };
+    code: 'export const api = true;',
+    cwd: repoRoot,
+    filePath: 'api.ts'
+  });
 }
 
 async function readReviewUpdatedEvents(
@@ -387,6 +378,21 @@ async function readReviewUpdatedEvents(
     return updates.length === count;
   });
   return updates;
+}
+
+async function responseJson<T>(response: Response, guard: JsonGuard<T>, label: string): Promise<T> {
+  const value: unknown = await response.json();
+  return parseJsonValue(value, guard, label);
+}
+
+function isErrorResponse(value: unknown): value is { error: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    'error' in value &&
+    typeof value.error === 'string'
+  );
 }
 
 async function readReviewEvents(response: Response, count: number): Promise<ReviewEvent[]>;
@@ -424,7 +430,7 @@ async function readReviewEvents(
         if (!dataLine) {
           continue;
         }
-        const event = JSON.parse(dataLine.slice(5).trim()) as ReviewEvent;
+        const event = parseJson(dataLine.slice(5).trim(), isReviewEvent, 'review event');
         events.push(event);
         if (isDone(event)) {
           return events;

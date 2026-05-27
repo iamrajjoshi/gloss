@@ -1,5 +1,6 @@
 import { Check, Send, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { formatLineRange } from '../../shared/comments';
 import { submitReview } from '../api';
 import { useReviewStore } from '../store';
 
@@ -24,9 +25,7 @@ export function SubmitBar({
           comments.map((comment) => (
             <div className="comment-chip" key={comment.id}>
               <span>
-                {comment.filePath}:{comment.side}
-                {comment.startLine}
-                {comment.endLine !== comment.startLine ? `-${comment.endLine}` : ''}
+                {comment.filePath}:{formatLineRange(comment, { repeatSideOnEnd: false })}
               </span>
               <button
                 className="icon-button"

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, openSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import getPort from 'get-port';
 import {
@@ -11,16 +11,11 @@ import {
   globalStateDir,
   packageVersion
 } from '../shared/paths';
+import { readServerInfo, writeServerInfo } from '../shared/server-info';
 import type { ServerInfo } from '../shared/types';
 import { ServerClient } from './server-client';
 
-export async function readServerInfo(): Promise<ServerInfo | null> {
-  try {
-    return JSON.parse(await readFile(globalServerFile(), 'utf8')) as ServerInfo;
-  } catch {
-    return null;
-  }
-}
+export { readServerInfo } from '../shared/server-info';
 
 export function serverUrl(info: Pick<ServerInfo, 'port'>): string {
   return `http://localhost:${info.port}`;
@@ -79,7 +74,7 @@ export async function startServer(options: { port?: number } = {}): Promise<Serv
     startedAt: new Date().toISOString(),
     stateDir: globalStateDir()
   };
-  await writeFile(globalServerFile(), `${JSON.stringify(info, null, 2)}\n`);
+  await writeServerInfo(info);
 
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -105,12 +100,7 @@ export async function stopServer(): Promise<{ stopped: boolean; info: ServerInfo
   return { stopped: true, info };
 }
 
-export async function writeServerInfo(info: ServerInfo): Promise<void> {
-  await ensureDir(globalStateDir());
-  await writeFile(globalServerFile(), `${JSON.stringify(info, null, 2)}\n`);
-}
-
-export function isPidAlive(pid: number): boolean {
+function isPidAlive(pid: number): boolean {
   if (pid <= 0) {
     return false;
   }

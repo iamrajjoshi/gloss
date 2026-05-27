@@ -1,6 +1,6 @@
 import { serve } from '@hono/node-server';
-import { writeServerInfo } from '../cli/lifecycle';
 import { globalStateDir, packageVersion } from '../shared/paths';
+import { writeServerInfo } from '../shared/server-info';
 import { createApp } from './index';
 
 const port = Number(process.env.GLOSS_PORT ?? '0');
