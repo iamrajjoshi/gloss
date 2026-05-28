@@ -60,6 +60,11 @@ The skill pairs the CLI with the browser app:
 7. Run `gloss resolve <reviewId> --summary "<what changed>"`, then summarize
    what changed.
 
+Browser review shortcuts:
+
+- `Command+Enter` saves the active draft comment.
+- `Command+Shift+Enter` submits the review with already-saved comments.
+
 ## Update Your Persistent Instructions
 
 Add Gloss guidance to the persistent instruction file this agent will actually

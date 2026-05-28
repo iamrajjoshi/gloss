@@ -2,6 +2,7 @@ import { MessageSquarePlus } from 'lucide-react';
 import { useState } from 'react';
 import { formatLineRange } from '../../shared/comments';
 import type { DiffLineType } from '../../shared/types';
+import { isSubmitCommentShortcut } from '../shortcuts';
 import { useReviewStore } from '../store';
 
 export function CommentComposer({ tone }: { tone: DiffLineType }) {
@@ -22,6 +23,10 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
     setBody('');
     setDraft(null);
   };
+  const submitComment = () => {
+    addComment(body);
+    setBody('');
+  };
 
   return (
     <div className={`draft-comment-shell tone-${tone}`}>
@@ -40,18 +45,23 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
           placeholder="Request change"
           value={body}
           onChange={(event) => setBody(event.target.value)}
+          onKeyDown={(event) => {
+            if (isSubmitCommentShortcut(event)) {
+              event.preventDefault();
+              submitComment();
+            }
+          }}
         />
         <div className="draft-comment-actions">
           <button className="secondary-button" type="button" onClick={cancelDraft}>
             Cancel
           </button>
           <button
+            aria-keyshortcuts="Meta+Enter"
             className="primary-button"
+            title="Comment (Command+Enter)"
             type="button"
-            onClick={() => {
-              addComment(body);
-              setBody('');
-            }}
+            onClick={submitComment}
           >
             Comment
           </button>

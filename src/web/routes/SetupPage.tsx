@@ -75,6 +75,10 @@ export function SetupPage() {
           Leave the command running. Gloss exits after the browser review is submitted and writes
           feedback under <code>~/.gloss/reviews/&lt;reviewId&gt;/</code>.
         </p>
+        <p>
+          In the browser review, <code>Command+Enter</code> saves the active draft comment and{' '}
+          <code>Command+Shift+Enter</code> submits already-saved comments.
+        </p>
         <p>Start a fresh session with the same command for follow-up diffs.</p>
       </section>
 
