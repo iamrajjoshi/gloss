@@ -1,5 +1,5 @@
 import { MessageSquarePlus } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatLineRange } from '../../shared/comments';
 import type { DiffLineType } from '../../shared/types';
 import { isSubmitCommentShortcut } from '../shortcuts';
@@ -10,6 +10,13 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
   const setDraft = useReviewStore((state) => state.setDraft);
   const addComment = useReviewStore((state) => state.addComment);
   const [body, setBody] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (draft) {
+      textareaRef.current?.focus({ preventScroll: true });
+    }
+  }, [draft]);
 
   if (!draft) {
     return null;
@@ -43,6 +50,7 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
         <textarea
           aria-label={label}
           placeholder="Request change"
+          ref={textareaRef}
           value={body}
           onChange={(event) => setBody(event.target.value)}
           onKeyDown={(event) => {
