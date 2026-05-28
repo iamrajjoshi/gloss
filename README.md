@@ -83,6 +83,13 @@ best available merge-base from upstream, `origin/HEAD`, `origin/main`, or
 Use `--base <ref>` when you want an explicit comparison. Explicit base mode
 compares only against the requested ref and does not switch to a branch diff.
 
+## Review UI
+
+In the browser review, drag over a changed line or range to open a draft
+comment. Use `Command+Enter` to save the active draft comment. Use
+`Command+Shift+Enter` to submit the review; this matches the Submit button and
+includes already-saved comments only.
+
 ## Feedback Files
 
 Submitted reviews are written to:
