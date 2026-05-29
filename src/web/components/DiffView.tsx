@@ -1,4 +1,4 @@
-import { CheckCircle2, MessageSquare } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Plus } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile, DiffLine, DiffPayload, ReviewRecord, Side } from '../../shared/types';
@@ -209,7 +209,7 @@ function DiffFileTable({
 
   useEffect(() => () => cleanupSelectionListeners.current?.(), []);
 
-  const rowFromElement = (element: HTMLButtonElement): RowRef | null => {
+  const rowFromElement = (element: HTMLElement): RowRef | null => {
     if (element.dataset.filePath !== file.path) {
       return null;
     }
@@ -227,7 +227,7 @@ function DiffFileTable({
     };
   };
 
-  const extendSelectionFromElement = (element: HTMLButtonElement) => {
+  const extendSelectionFromElement = (element: HTMLElement) => {
     const row = rowFromElement(element);
     if (row) {
       extendSelection(row);
@@ -250,7 +250,7 @@ function DiffFileTable({
     const updateSelectionFromMouse = (event: MouseEvent) => {
       const element = document
         .elementFromPoint(event.clientX, event.clientY)
-        ?.closest<HTMLButtonElement>('.diff-row');
+        ?.closest<HTMLElement>('.diff-row');
       if (element) {
         extendSelectionFromElement(element);
       }
@@ -274,6 +274,24 @@ function DiffFileTable({
       window.removeEventListener('blur', cancel);
       cleanupSelectionListeners.current = null;
     };
+  };
+
+  const openSingleLineDraftFromKeyboard = (
+    row: RowRef,
+    event: React.KeyboardEvent<HTMLButtonElement>
+  ) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    if (event.repeat || event.defaultPrevented || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    cleanupSelectionListeners.current?.();
+    selectionRef.current = null;
+    setDragStart(null);
+    setDragEnd(null);
+    openDraft({ start: row, end: row });
   };
 
   const extendSelection = (row: RowRef) => {
@@ -318,7 +336,7 @@ function DiffFileTable({
       className={`diff-scroller ${wrapLines ? 'wrap-lines' : ''}`}
       key={wrapLines ? 'wrapped' : 'unwrapped'}
     >
-      <div className="diff-table">
+      <div className={`diff-table ${dragStart ? 'selecting' : ''}`}>
         {file.isBinary ? <div className="binary-note">Binary file changed</div> : null}
         {file.hunks.map((hunk) => {
           const hidden =
@@ -376,31 +394,36 @@ function DiffFileTable({
                   <div
                     key={`${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
                   >
-                    <button
+                    <div
                       className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
                       data-file-path={file.path}
                       data-line={lineNumber}
                       data-side={side}
-                      type="button"
-                      aria-disabled={readOnly}
-                      onMouseDown={readOnly ? undefined : (event) => startSelection(row, event)}
-                      onMouseEnter={
-                        readOnly
-                          ? undefined
-                          : (event) => extendSelectionFromElement(event.currentTarget)
-                      }
                     >
                       {selectionClass ? (
                         <span className="selection-rail" aria-hidden="true" />
                       ) : null}
-                      <span className="line-number old">{line.oldLine ?? ''}</span>
-                      <span className="line-number new">{line.newLine ?? ''}</span>
-                      <span className="marker">{markerForLine(line)}</span>
+                      <div className="diff-gutter">
+                        <span className="line-number old">{line.oldLine ?? ''}</span>
+                        <span className="line-number new">{line.newLine ?? ''}</span>
+                        <span className="marker">{markerForLine(line)}</span>
+                        {!readOnly ? (
+                          <button
+                            aria-label={`Comment on ${file.path} line ${lineNumber}`}
+                            className="comment-handle"
+                            type="button"
+                            onMouseDown={(event) => startSelection(row, event)}
+                            onKeyDown={(event) => openSingleLineDraftFromKeyboard(row, event)}
+                          >
+                            <Plus size={16} strokeWidth={2.4} />
+                          </button>
+                        ) : null}
+                      </div>
                       <CodeLine
                         content={line.content}
                         tokens={highlightedLines?.get(rowKey(side, lineNumber)) ?? null}
                       />
-                    </button>
+                    </div>
                     {rowComments.map((comment) => {
                       const resolvedComment = resolvedByCommentId.get(comment.id);
                       return (
