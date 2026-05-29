@@ -1385,14 +1385,13 @@ pre {
   --range-gutter-background: color-mix(in srgb, var(--ide-accent) 40%, var(--ide-bg-muted));
   --range-rail: var(--ide-accent);
   display: grid;
-  grid-template-columns: 58px 58px 24px minmax(680px, max-content);
+  grid-template-columns: 140px minmax(680px, max-content);
   width: 100%;
   min-height: 26px;
   align-items: stretch;
   border: 0;
   background: transparent;
   color: var(--ide-fg);
-  cursor: cell;
   position: relative;
   text-align: left;
 }
@@ -1450,7 +1449,7 @@ pre {
     var(--ide-accent) 40%,
     color-mix(in srgb, var(--ide-success) 18%, var(--ide-bg-muted))
   );
-  --range-rail: var(--ide-success);
+  --range-rail: var(--ide-accent);
 }
 
 .diff-row.delete.range-selected {
@@ -1465,22 +1464,18 @@ pre {
     var(--ide-accent) 42%,
     color-mix(in srgb, var(--ide-danger) 18%, var(--ide-bg-muted))
   );
-  --range-rail: var(--ide-danger);
+  --range-rail: var(--ide-accent);
 }
 
 .selection-rail {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
+  left: 138px;
   z-index: 2;
-  width: 6px;
-  background: repeating-linear-gradient(
-    to bottom,
-    var(--range-rail) 0 2px,
-    color-mix(in srgb, var(--range-rail) 42%, transparent) 2px 3px,
-    transparent 3px 5px
-  );
+  width: 3px;
+  border-radius: 999px;
+  background: var(--range-rail);
   pointer-events: none;
 }
 
@@ -1504,6 +1499,66 @@ pre {
 
 .diff-row.range-single.range-continues {
   box-shadow: inset 0 1px var(--range-border);
+}
+
+.diff-gutter {
+  display: grid;
+  grid-template-columns: 58px 58px 24px;
+  min-height: 26px;
+  padding: 0;
+  color: inherit;
+  position: relative;
+  text-align: left;
+  user-select: none;
+}
+
+.comment-handle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 3;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ide-accent);
+  color: white;
+  cursor: cell;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease;
+  user-select: none;
+}
+
+.comment-handle:hover,
+.comment-handle:focus-visible {
+  background: color-mix(in srgb, var(--ide-accent) 82%, white);
+}
+
+.diff-row:hover .comment-handle,
+.comment-handle:focus-visible,
+.diff-row.range-start .comment-handle,
+.diff-row.range-single .comment-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.diff-table.selecting .diff-row:hover .comment-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.diff-table.selecting .diff-row.range-start .comment-handle,
+.diff-table.selecting .diff-row.range-single .comment-handle {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .line-number {
@@ -1557,6 +1612,8 @@ pre {
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 26px;
+  cursor: text;
+  user-select: text;
 }
 
 .diff-scroller.wrap-lines {
@@ -1569,7 +1626,7 @@ pre {
 }
 
 .diff-scroller.wrap-lines .diff-row {
-  grid-template-columns: 58px 58px 24px minmax(0, 1fr);
+  grid-template-columns: 140px minmax(0, 1fr);
 }
 
 .diff-scroller.wrap-lines .diff-row code {
