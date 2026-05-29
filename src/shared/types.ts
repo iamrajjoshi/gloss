@@ -59,6 +59,36 @@ export interface DiffStats {
   deletions: number;
 }
 
+export interface DiffCommit {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  committedAt: string;
+}
+
+export interface CommitDiff {
+  commit: DiffCommit;
+  stats: DiffStats;
+  rawDiff: string;
+  files: DiffFile[];
+}
+
+export interface CommitRangeDiffRequest {
+  fromSha: string;
+  toSha: string;
+}
+
+export interface CommitRangeDiffResponse {
+  fromSha: string;
+  toSha: string;
+  stats: DiffStats;
+  rawDiff: string;
+  files: DiffFile[];
+}
+
 interface DiffScope {
   mode: DiffScopeMode;
   requestedBase: string | null;
@@ -75,6 +105,7 @@ export interface DiffPayload {
   stats: DiffStats;
   rawDiff: string;
   files: DiffFile[];
+  commitDiffs?: CommitDiff[];
   capturedAt: string;
 }
 
@@ -199,4 +230,13 @@ export interface SubmitReviewRequest {
 
 export interface ResolutionRequest {
   summary?: string;
+}
+
+export interface OpenFileRequest {
+  filePath: string;
+}
+
+export interface OpenFileResponse {
+  ok: true;
+  path: string;
 }

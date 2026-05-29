@@ -1,6 +1,10 @@
 import type {
   Comment,
+  CommitDiff,
+  CommitRangeDiffRequest,
+  CommitRangeDiffResponse,
   CreateReviewResponse,
+  DiffCommit,
   DiffFile,
   DiffHunk,
   DiffLine,
@@ -9,6 +13,8 @@ import type {
   FeedbackBundle,
   HealthResponse,
   ListReviewsResponse,
+  OpenFileRequest,
+  OpenFileResponse,
   OpenResult,
   ResolutionBundle,
   ResolutionRequest,
@@ -87,6 +93,29 @@ export function isOpenResult(value: unknown): value is OpenResult {
   );
 }
 
+export function isOpenFileRequest(value: unknown): value is OpenFileRequest {
+  return isRecord(value) && isString(value.filePath);
+}
+
+export function isOpenFileResponse(value: unknown): value is OpenFileResponse {
+  return isRecord(value) && value.ok === true && isString(value.path);
+}
+
+export function isCommitRangeDiffRequest(value: unknown): value is CommitRangeDiffRequest {
+  return isRecord(value) && isString(value.fromSha) && isString(value.toSha);
+}
+
+export function isCommitRangeDiffResponse(value: unknown): value is CommitRangeDiffResponse {
+  return (
+    isRecord(value) &&
+    isString(value.fromSha) &&
+    isString(value.toSha) &&
+    isDiffStats(value.stats) &&
+    isString(value.rawDiff) &&
+    isArrayOf(value.files, isDiffFile)
+  );
+}
+
 export function isResolveResult(value: unknown): value is ResolveResult {
   return (
     isRecord(value) &&
@@ -149,6 +178,9 @@ export function isDiffPayload(value: unknown): value is DiffPayload {
     isDiffStats(value.stats) &&
     isString(value.rawDiff) &&
     isArrayOf(value.files, isDiffFile) &&
+    isOptional(value.commitDiffs, (commitDiffs): commitDiffs is CommitDiff[] =>
+      isArrayOf(commitDiffs, isCommitDiff)
+    ) &&
     isString(value.capturedAt)
   );
 }
@@ -225,6 +257,29 @@ function isDiffStats(value: unknown): value is DiffStats {
     isNumber(value.files) &&
     isNumber(value.additions) &&
     isNumber(value.deletions)
+  );
+}
+
+function isDiffCommit(value: unknown): value is DiffCommit {
+  return (
+    isRecord(value) &&
+    isString(value.sha) &&
+    isString(value.shortSha) &&
+    isString(value.subject) &&
+    isString(value.authorName) &&
+    isString(value.authorEmail) &&
+    isString(value.authoredAt) &&
+    isString(value.committedAt)
+  );
+}
+
+function isCommitDiff(value: unknown): value is CommitDiff {
+  return (
+    isRecord(value) &&
+    isDiffCommit(value.commit) &&
+    isDiffStats(value.stats) &&
+    isString(value.rawDiff) &&
+    isArrayOf(value.files, isDiffFile)
   );
 }
 

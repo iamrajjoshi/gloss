@@ -1,7 +1,7 @@
 import { CheckCircle2, MessageSquare } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { DiffFile, DiffLine, ReviewRecord, Side } from '../../shared/types';
+import type { DiffFile, DiffLine, DiffPayload, ReviewRecord, Side } from '../../shared/types';
 import { useReviewStore } from '../store';
 import type { HighlightedDiffLines, SyntaxToken } from '../syntax';
 import { CommentComposer } from './CommentPopover';
@@ -24,20 +24,28 @@ export function DiffView({
   emptyState = null,
   files,
   record,
+  diff = record.diff,
   readOnly = false,
-  wrapLines = false
+  wrapLines = false,
+  viewedFiles = new Set<string>(),
+  onViewedChange = () => undefined,
+  onOpenFile = () => undefined
 }: {
   activeFilePath?: string | null;
   emptyState?: ReactNode;
   files?: DiffFile[];
   record: ReviewRecord;
+  diff?: Pick<DiffPayload, 'files'>;
   readOnly?: boolean;
   wrapLines?: boolean;
+  viewedFiles?: Set<string>;
+  onViewedChange?: (filePath: string, viewed: boolean) => void;
+  onOpenFile?: (filePath: string) => void;
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
-  const renderedFiles = files ?? record.diff.files;
+  const renderedFiles = files ?? diff.files;
 
   useEffect(() => {
     if (!activeFilePath) {
@@ -52,6 +60,20 @@ export function DiffView({
       return next;
     });
   }, [activeFilePath]);
+
+  const handleViewedChange = (filePath: string, viewed: boolean) => {
+    if (viewed) {
+      if (draft?.filePath === filePath) {
+        setDraft(null);
+      }
+      setCollapsedFiles((current) => {
+        const next = new Set(current);
+        next.add(filePath);
+        return next;
+      });
+    }
+    onViewedChange(filePath, viewed);
+  };
 
   return (
     <section className="diff-stack">
@@ -68,6 +90,7 @@ export function DiffView({
                 <FileHeader
                   file={file}
                   collapsed={collapsed}
+                  viewed={viewedFiles.has(file.path)}
                   onToggle={() => {
                     if (!collapsed && draft?.filePath === file.path) {
                       setDraft(null);
@@ -78,6 +101,8 @@ export function DiffView({
                       return next;
                     });
                   }}
+                  onViewedChange={(viewed) => handleViewedChange(file.path, viewed)}
+                  onOpenFile={() => onOpenFile(file.path)}
                 />
                 {collapsed ? null : (
                   <DiffFileTable file={file} readOnly={readOnly} wrapLines={wrapLines} />

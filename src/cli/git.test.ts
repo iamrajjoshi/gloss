@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
-import { captureDiff } from './git';
+import { captureCommitRangeDiff, captureDiff } from './git';
 
 const repos: string[] = [];
 
@@ -89,6 +89,46 @@ describe('captureDiff', () => {
     expect(diff.files).toHaveLength(1);
     expect(diff.files[0]).toMatchObject({ path: 'feature.ts', additions: 1, deletions: 0 });
     expect(diff.stats).toMatchObject({ files: 1, additions: 1, deletions: 0 });
+  });
+
+  it('captures per-commit diffs for clean branch reviews', async () => {
+    const repo = await seedRepo();
+    const mainSha = await git(['rev-parse', 'main'], repo);
+    await git(['update-ref', 'refs/remotes/origin/main', mainSha], repo);
+    await git(['switch', '-c', 'feature'], repo);
+    await write(repo, 'first.ts', 'export const first = true;\n');
+    await commitAll(repo, 'add first file');
+    await write(repo, 'second.ts', 'export const second = true;\n');
+    await commitAll(repo, 'add second file');
+
+    const diff = await captureDiff(undefined, repo);
+
+    expect(diff.scope.mode).toBe('branch');
+    expect(diff.files.map((file) => file.path).sort()).toEqual(['first.ts', 'second.ts']);
+    expect(diff.stats).toMatchObject({ files: 2, additions: 2, deletions: 0 });
+    expect(diff.commitDiffs?.map((commitDiff) => commitDiff.commit.subject)).toEqual([
+      'add first file',
+      'add second file'
+    ]);
+    expect(
+      diff.commitDiffs?.map((commitDiff) => commitDiff.files.map((file) => file.path))
+    ).toEqual([['first.ts'], ['second.ts']]);
+    expect(diff.commitDiffs?.[0]).toMatchObject({
+      stats: { files: 1, additions: 1, deletions: 0 },
+      commit: {
+        authorName: 'Gloss Test',
+        authorEmail: 'gloss@example.com'
+      }
+    });
+    expect(diff.commitDiffs?.[0]?.commit.sha).toHaveLength(40);
+
+    const rangeDiff = await captureCommitRangeDiff(
+      diff.commitDiffs?.[0]?.commit.sha ?? '',
+      diff.commitDiffs?.[1]?.commit.sha ?? '',
+      repo
+    );
+    expect(rangeDiff.files.map((file) => file.path).sort()).toEqual(['first.ts', 'second.ts']);
+    expect(rangeDiff.stats).toMatchObject({ files: 2, additions: 2, deletions: 0 });
   });
 
   it('keeps explicit base behavior without branch fallback', async () => {
