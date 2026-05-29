@@ -1,7 +1,9 @@
 import { CheckCircle2, MessageSquare } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile, DiffLine, ReviewRecord, Side } from '../../shared/types';
 import { useReviewStore } from '../store';
+import type { HighlightedDiffLines, SyntaxToken } from '../syntax';
 import { CommentComposer } from './CommentPopover';
 import { FileHeader } from './FileHeader';
 
@@ -118,6 +120,7 @@ function DiffFileTable({
   const setDraft = useReviewStore((state) => state.setDraft);
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
+  const [highlightedLines, setHighlightedLines] = useState<HighlightedDiffLines | null>(null);
   const selectionRef = useRef<SelectionRef | null>(null);
   const cleanupSelectionListeners = useRef<(() => void) | null>(null);
   const visualIndexByLine = useMemo(() => buildVisualIndex(file), [file]);
@@ -236,6 +239,27 @@ function DiffFileTable({
     setDragEnd(null);
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    setHighlightedLines(null);
+    import('../syntax')
+      .then(({ highlightDiffFile }) => highlightDiffFile(file))
+      .then((nextHighlightedLines) => {
+        if (!cancelled) {
+          setHighlightedLines(nextHighlightedLines);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHighlightedLines(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
+
   return (
     <section
       aria-label={`${file.path} diff`}
@@ -320,7 +344,10 @@ function DiffFileTable({
                       <span className="line-number old">{line.oldLine ?? ''}</span>
                       <span className="line-number new">{line.newLine ?? ''}</span>
                       <span className="marker">{markerForLine(line)}</span>
-                      <code>{line.content || ' '}</code>
+                      <CodeLine
+                        content={line.content}
+                        tokens={highlightedLines?.get(rowKey(side, lineNumber)) ?? null}
+                      />
                     </button>
                     {rowComments.map((comment) => {
                       const resolvedComment = resolvedByCommentId.get(comment.id);
@@ -360,6 +387,46 @@ function DiffFileTable({
       </div>
     </section>
   );
+}
+
+function CodeLine({ content, tokens }: { content: string; tokens: SyntaxToken[] | null }) {
+  if (!tokens || tokens.length === 0) {
+    return <code>{content || ' '}</code>;
+  }
+
+  return (
+    <code>
+      {tokens.map((token) => (
+        <span key={`${token.offset}:${token.content}`} style={styleForToken(token)}>
+          {token.content}
+        </span>
+      ))}
+    </code>
+  );
+}
+
+function styleForToken(token: SyntaxToken): CSSProperties {
+  const style: CSSProperties = {};
+  if (token.color) {
+    style.color = token.color;
+  }
+  if (token.fontStyle && (token.fontStyle & 1) !== 0) {
+    style.fontStyle = 'italic';
+  }
+  if (token.fontStyle && (token.fontStyle & 2) !== 0) {
+    style.fontWeight = 700;
+  }
+  const textDecoration = [];
+  if (token.fontStyle && (token.fontStyle & 4) !== 0) {
+    textDecoration.push('underline');
+  }
+  if (token.fontStyle && (token.fontStyle & 8) !== 0) {
+    textDecoration.push('line-through');
+  }
+  if (textDecoration.length > 0) {
+    style.textDecorationLine = textDecoration.join(' ');
+  }
+  return style;
 }
 
 function markerForLine(line: DiffLine): string {
