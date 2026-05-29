@@ -1,3 +1,5 @@
+import type { JsonValue } from '../shared/json';
+
 interface ViewedFileStorage {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
@@ -24,7 +26,7 @@ export function loadViewedFiles(
   }
 
   try {
-    const parsed: unknown = JSON.parse(raw);
+    const parsed: JsonValue = JSON.parse(raw);
     return new Set(
       Array.isArray(parsed) ? parsed.filter((filePath) => typeof filePath === 'string') : []
     );

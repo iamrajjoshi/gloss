@@ -7,6 +7,14 @@ import {
   globalReviewMarkdownFile,
   packageVersion
 } from '../shared/paths';
+import type {
+  DiffPayload,
+  FeedbackBundle,
+  ResolveResult,
+  ReviewEvent,
+  ReviewMeta,
+  ServerInfo
+} from '../shared/types';
 import { assertGitAvailable, captureDiff, getRepoRoot } from './git';
 import {
   ensureServer,
@@ -24,7 +32,35 @@ interface GlobalOptions {
   noColor?: boolean;
 }
 
-function printJson(value: object): void {
+type DoctorCheck = { name: string; ok: boolean; detail?: string };
+
+type CliJsonOutput =
+  | ServerInfo
+  | ReviewEvent
+  | ResolveResult
+  | { stopped: boolean; info: ServerInfo | null }
+  | {
+      reviewId: string;
+      url: string;
+      files: number;
+      scope: DiffPayload['scope']['mode'];
+      artifactDir: string;
+    }
+  | {
+      reviewId: string;
+      url: string;
+      files: number;
+      comments: number;
+      feedbackPath: string;
+      markdownPath: string;
+      artifactDir: string;
+      feedback: FeedbackBundle;
+    }
+  | { running: boolean; server: ServerInfo | null; reviews: ReviewMeta[] }
+  | (ResolveResult & { commentId: string | null; summary: string | null })
+  | { checks: DoctorCheck[] };
+
+function printJson(value: CliJsonOutput): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -196,7 +232,7 @@ program
   .description('Diagnose setup and validate git/state')
   .action(async () => {
     const globals = program.opts<GlobalOptions>();
-    const checks: Array<{ name: string; ok: boolean; detail?: string }> = [];
+    const checks: DoctorCheck[] = [];
     try {
       await assertGitAvailable();
       checks.push({ name: 'git', ok: true });

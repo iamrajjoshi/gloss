@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { diffLineKey } from '../shared/diff-lines';
 import type { DiffFile } from '../shared/types';
-import { highlightDiffFile, rowKey, shikiLanguageForGlossLanguage } from './syntax';
+import { highlightDiffFile, shikiLanguageForGlossLanguage } from './syntax';
 
 describe('shikiLanguageForGlossLanguage', () => {
   it('maps supported Gloss languages to Shiki languages', () => {
@@ -60,23 +61,23 @@ describe('highlightDiffFile', () => {
     expect(highlighted).not.toBeNull();
     expect(
       highlighted
-        ?.get(rowKey('R', 1))
+        ?.get(diffLineKey('R', 1))
         ?.map((token) => token.content)
         .join('')
     ).toBe("import x from 'x';");
     expect(
       highlighted
-        ?.get(rowKey('L', 2))
+        ?.get(diffLineKey('L', 2))
         ?.map((token) => token.content)
         .join('')
     ).toBe('const oldName = 1;');
     expect(
       highlighted
-        ?.get(rowKey('R', 2))
+        ?.get(diffLineKey('R', 2))
         ?.map((token) => token.content)
         .join('')
     ).toBe('const newName = 1;');
-    expect(highlighted?.get(rowKey('R', 2))?.some((token) => token.color)).toBe(true);
+    expect(highlighted?.get(diffLineKey('R', 2))?.some((token) => token.color)).toBe(true);
   });
 
   it('falls back for unsupported languages and binary files', async () => {

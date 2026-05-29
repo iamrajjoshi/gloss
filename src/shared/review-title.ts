@@ -9,7 +9,7 @@ export function reviewDisplayTitle(record: ReviewRecord): string {
   return diffScopeTitle(record.diff);
 }
 
-export function diffScopeTitle(diff: DiffPayload): string {
+function diffScopeTitle(diff: DiffPayload): string {
   switch (diff.scope.mode) {
     case 'branch':
       return 'Branch diff';

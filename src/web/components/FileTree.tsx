@@ -13,32 +13,13 @@ import {
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile } from '../../shared/types';
-
-export const NO_EXTENSION_ID = '__gloss_no_extension__';
-
-export interface ExtensionBucket {
-  id: string;
-  label: string;
-  count: number;
-}
-
-export type FileTreeNode = FileTreeDirectoryNode | FileTreeFileNode;
-
-export interface FileTreeDirectoryNode {
-  type: 'directory';
-  id: string;
-  name: string;
-  path: string;
-  children: FileTreeNode[];
-}
-
-export interface FileTreeFileNode {
-  type: 'file';
-  id: string;
-  name: string;
-  path: string;
-  file: DiffFile;
-}
+import {
+  buildFileTree,
+  compactDirectoryNode,
+  type ExtensionBucket,
+  type FileTreeDirectoryNode,
+  type FileTreeNode
+} from './file-tree-helpers';
 
 interface FileTreeProps {
   activeFilePath: string | null;
@@ -324,119 +305,7 @@ function FileTreeNodeRow({
   );
 }
 
-export function compactDirectoryNode(node: FileTreeDirectoryNode): {
-  name: string;
-  node: FileTreeDirectoryNode;
-} {
-  const names = [node.name];
-  let current = node;
-
-  while (current.children.length === 1 && current.children[0].type === 'directory') {
-    current = current.children[0];
-    names.push(current.name);
-  }
-
-  return {
-    name: names.join('/'),
-    node: current
-  };
-}
-
-export function buildExtensionBuckets(files: DiffFile[]): ExtensionBucket[] {
-  const counts = new Map<string, ExtensionBucket>();
-
-  for (const file of files) {
-    const id = extensionIdForPath(file.path);
-    const current = counts.get(id);
-    if (current) {
-      current.count += 1;
-    } else {
-      counts.set(id, {
-        id,
-        label: id === NO_EXTENSION_ID ? 'No extension' : id,
-        count: 1
-      });
-    }
-  }
-
-  return Array.from(counts.values()).sort((left, right) => {
-    if (left.id === NO_EXTENSION_ID) {
-      return 1;
-    }
-    if (right.id === NO_EXTENSION_ID) {
-      return -1;
-    }
-    return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' });
-  });
-}
-
-export function filterDiffFiles(
-  files: DiffFile[],
-  searchQuery: string,
-  selectedExtensionIds: Set<string>
-): DiffFile[] {
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  if (selectedExtensionIds.size === 0) {
-    return [];
-  }
-
-  return files.filter((file) => {
-    const extensionMatches = selectedExtensionIds.has(extensionIdForPath(file.path));
-    const searchMatches =
-      normalizedSearch.length === 0 || file.path.toLowerCase().includes(normalizedSearch);
-    return extensionMatches && searchMatches;
-  });
-}
-
-export function buildFileTree(files: DiffFile[]): FileTreeDirectoryNode {
-  const root: FileTreeDirectoryNode = {
-    type: 'directory',
-    id: 'root',
-    name: '',
-    path: '',
-    children: []
-  };
-
-  for (const file of files) {
-    const parts = file.path.split('/').filter(Boolean);
-    let current = root;
-
-    for (const [index, part] of parts.entries()) {
-      const isFile = index === parts.length - 1;
-      const path = parts.slice(0, index + 1).join('/');
-      if (isFile) {
-        current.children.push({
-          type: 'file',
-          id: `file:${file.path}`,
-          name: part,
-          path: file.path,
-          file
-        });
-      } else {
-        let directory = current.children.find(
-          (child): child is FileTreeDirectoryNode =>
-            child.type === 'directory' && child.name === part
-        );
-        if (!directory) {
-          directory = {
-            type: 'directory',
-            id: `dir:${path}`,
-            name: part,
-            path,
-            children: []
-          };
-          current.children.push(directory);
-        }
-        current = directory;
-      }
-    }
-  }
-
-  sortTree(root);
-  return root;
-}
-
-export function collectExpandedDirectoryIds(root: FileTreeDirectoryNode): Set<string> {
+function collectExpandedDirectoryIds(root: FileTreeDirectoryNode): Set<string> {
   const expanded = new Set<string>();
 
   const visit = (node: FileTreeDirectoryNode) => {
@@ -450,28 +319,4 @@ export function collectExpandedDirectoryIds(root: FileTreeDirectoryNode): Set<st
 
   visit(root);
   return expanded;
-}
-
-export function extensionIdForPath(path: string): string {
-  const basename = path.split('/').pop() ?? path;
-  const dotIndex = basename.lastIndexOf('.');
-  if (dotIndex <= 0 || dotIndex === basename.length - 1) {
-    return NO_EXTENSION_ID;
-  }
-  return basename.slice(dotIndex).toLowerCase();
-}
-
-function sortTree(directory: FileTreeDirectoryNode) {
-  directory.children.sort((left, right) => {
-    if (left.type !== right.type) {
-      return left.type === 'directory' ? -1 : 1;
-    }
-    return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
-  });
-
-  for (const child of directory.children) {
-    if (child.type === 'directory') {
-      sortTree(child);
-    }
-  }
 }

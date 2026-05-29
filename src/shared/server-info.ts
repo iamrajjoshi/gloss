@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { formatError, isFileNotFound } from './errors';
 import { writeJsonFile } from './json';
 import { ensureDir, globalServerFile, globalStateDir } from './paths';
 import type { ServerInfo } from './types';
@@ -29,12 +30,4 @@ export async function readServerInfo(): Promise<ServerInfo | null> {
 export async function writeServerInfo(info: ServerInfo): Promise<void> {
   await ensureDir(globalStateDir());
   await writeJsonFile(globalServerFile(), info);
-}
-
-function isFileNotFound(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

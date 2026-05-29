@@ -1,3 +1,4 @@
+import type { JsonValue } from './json';
 import type {
   Comment,
   CommitDiff,
@@ -26,26 +27,27 @@ import type {
   ServerInfo,
   SubmitReviewRequest
 } from './types';
+import {
+  DIFF_FALLBACK_REASONS,
+  DIFF_LINE_TYPES,
+  DIFF_SCOPE_MODES,
+  RESOLUTION_STATUSES,
+  REVIEW_STATUSES,
+  REVIEW_UPDATE_REASONS,
+  SIDES
+} from './types';
 
 export type JsonGuard<T> = (value: unknown) => value is T;
 
 export type StoredReviewMeta = Omit<ReviewMeta, 'artifactDir'> &
   Partial<Pick<ReviewMeta, 'artifactDir' | 'feedbackPath' | 'markdownPath'>>;
 
-const reviewStatuses = ['pending', 'submitted', 'cancelled', 'resolved'] as const;
-const resolutionStatuses = ['partial', 'resolved'] as const;
-const reviewUpdateReasons = ['review-resolved', 'comment-resolved', 'comment-reopened'] as const;
-const sides = ['L', 'R'] as const;
-const diffLineTypes = ['context', 'add', 'delete'] as const;
-const diffScopeModes = ['working', 'branch', 'explicit'] as const;
-const diffFallbackReasons = ['working-tree-clean', 'missing-branch-base'] as const;
-
 export function parseJson<T>(raw: string, guard: JsonGuard<T>, label: string): T {
-  const parsed: unknown = JSON.parse(raw);
+  const parsed: JsonValue = JSON.parse(raw);
   return parseJsonValue(parsed, guard, label);
 }
 
-export function parseJsonValue<T>(value: unknown, guard: JsonGuard<T>, label: string): T {
+export function parseJsonValue<T>(value: JsonValue, guard: JsonGuard<T>, label: string): T {
   if (!guard(value)) {
     throw new Error(`Invalid ${label}`);
   }
@@ -235,11 +237,11 @@ export function isReviewEvent(value: unknown): value is ReviewEvent {
 function isDiffScope(value: unknown): value is DiffPayload['scope'] {
   return (
     isRecord(value) &&
-    isOneOf(value.mode, diffScopeModes) &&
+    isOneOf(value.mode, DIFF_SCOPE_MODES) &&
     isNullableString(value.requestedBase) &&
     isBaseRef(value.base) &&
     isDiffRef(value.comparison) &&
-    (value.fallbackReason === null || isOneOf(value.fallbackReason, diffFallbackReasons))
+    (value.fallbackReason === null || isOneOf(value.fallbackReason, DIFF_FALLBACK_REASONS))
   );
 }
 
@@ -314,7 +316,7 @@ function isDiffHunk(value: unknown): value is DiffHunk {
 function isDiffLine(value: unknown): value is DiffLine {
   return (
     isRecord(value) &&
-    isOneOf(value.type, diffLineTypes) &&
+    isOneOf(value.type, DIFF_LINE_TYPES) &&
     isNullableNumber(value.oldLine) &&
     isNullableNumber(value.newLine) &&
     isString(value.content)
@@ -328,7 +330,7 @@ function isComment(value: unknown): value is Comment {
     isString(value.filePath) &&
     isNumber(value.startLine) &&
     isNumber(value.endLine) &&
-    isOneOf(value.side, sides) &&
+    isOneOf(value.side, SIDES) &&
     isString(value.body) &&
     isString(value.originalSnippet) &&
     isString(value.createdAt)
@@ -352,17 +354,17 @@ function isResolutionCounts(value: unknown): value is ResolveResult['comments'] 
 }
 
 function isReviewStatus(value: unknown): value is ReviewMeta['status'] {
-  return isOneOf(value, reviewStatuses);
+  return isOneOf(value, REVIEW_STATUSES);
 }
 
 function isResolutionStatus(value: unknown): value is ResolutionBundle['status'] {
-  return isOneOf(value, resolutionStatuses);
+  return isOneOf(value, RESOLUTION_STATUSES);
 }
 
 function isReviewUpdateReason(
   value: unknown
 ): value is Extract<ReviewEvent, { type: 'review.updated' }>['reason'] {
-  return isOneOf(value, reviewUpdateReasons);
+  return isOneOf(value, REVIEW_UPDATE_REASONS);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

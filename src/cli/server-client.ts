@@ -1,3 +1,4 @@
+import type { JsonValue } from '../shared/json';
 import type {
   Comment,
   CreateReviewResponse,
@@ -162,7 +163,7 @@ export class ServerClient {
 
   private async post<T>(
     path: string,
-    body: object,
+    body: DiffPayload | ResolutionRequest | SubmitReviewRequest,
     guard: JsonGuard<T>,
     label: string
   ): Promise<T> {
@@ -188,18 +189,16 @@ async function parseResponse<T>(
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
   }
-  const value: unknown = await response.json();
+  const value: JsonValue = await response.json();
   return parseJsonValue(value, guard, label);
 }
 
-function isPrematureWatchEnd(error: unknown): boolean {
+function isPrematureWatchEnd(error: unknown): error is Error {
   return error instanceof Error && error.message === 'watch stream ended before completion';
 }
 
-function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError'
-  );
+function isAbortError(error: unknown): error is Error {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 async function sleep(milliseconds: number): Promise<void> {

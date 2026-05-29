@@ -8,7 +8,7 @@ import {
   type FileTreeNode,
   filterDiffFiles,
   NO_EXTENSION_ID
-} from './FileTree';
+} from './file-tree-helpers';
 
 describe('file tree helpers', () => {
   it('builds a sorted directory tree from diff file paths', () => {

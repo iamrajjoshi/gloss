@@ -17,7 +17,8 @@ import githubDarkDefault from '@shikijs/themes/github-dark-default';
 import { createHighlighterCore, type HighlighterCore, type ThemedToken } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import wasm from 'shiki/wasm';
-import type { DiffFile, DiffLine, Side } from '../shared/types';
+import { diffLineKey, diffLineNumber, diffLineSide } from '../shared/diff-lines';
+import type { DiffFile } from '../shared/types';
 
 export interface SyntaxToken {
   color?: string;
@@ -90,20 +91,19 @@ export async function highlightDiffFile(file: DiffFile): Promise<HighlightedDiff
     ).tokens;
 
     hunk.lines.forEach((line, index) => {
-      const side = sideForLine(line);
-      const lineNumber = lineNumberForLine(line);
+      const side = diffLineSide(line);
+      const lineNumber = diffLineNumber(line);
       if (lineNumber == null) {
         return;
       }
-      highlightedLines.set(rowKey(side, lineNumber), toSyntaxTokens(tokensByLine[index] ?? []));
+      highlightedLines.set(
+        diffLineKey(side, lineNumber),
+        toSyntaxTokens(tokensByLine[index] ?? [])
+      );
     });
   }
 
   return highlightedLines;
-}
-
-export function rowKey(side: Side, line: number): string {
-  return `${side}:${line}`;
 }
 
 function getDiffHighlighter(): Promise<HighlighterCore> {
@@ -122,12 +122,4 @@ function toSyntaxTokens(tokens: ThemedToken[]): SyntaxToken[] {
     fontStyle: token.fontStyle,
     offset: token.offset
   }));
-}
-
-function sideForLine(line: DiffLine): Side {
-  return line.type === 'delete' ? 'L' : 'R';
-}
-
-function lineNumberForLine(line: DiffLine): number | null {
-  return sideForLine(line) === 'L' ? line.oldLine : line.newLine;
 }

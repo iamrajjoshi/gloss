@@ -2,6 +2,7 @@ import type { Dirent } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { ulid } from 'ulid';
 import { compareCommentsByLocation, countCommentFiles, resolutionCounts } from '../shared/comments';
+import { formatError, isFileNotFound } from '../shared/errors';
 import { writeJsonFile } from '../shared/json';
 import { serializeFeedbackMarkdown } from '../shared/markdown';
 import {
@@ -392,12 +393,12 @@ export class ReviewStore {
       record.feedback.comments.map((comment, index) => [comment.id, index] as const)
     );
     return comments
-      .filter((comment) => feedbackIndex.has(comment.commentId))
-      .sort(
-        (a, b) =>
-          (feedbackIndex.get(a.commentId) ?? Number.MAX_SAFE_INTEGER) -
-          (feedbackIndex.get(b.commentId) ?? Number.MAX_SAFE_INTEGER)
-      );
+      .map((comment) => ({ comment, index: feedbackIndex.get(comment.commentId) }))
+      .filter(
+        (entry): entry is { comment: ResolvedComment; index: number } => entry.index !== undefined
+      )
+      .sort((a, b) => a.index - b.index)
+      .map(({ comment }) => comment);
   }
 }
 
@@ -427,14 +428,6 @@ function parseJsonFile<T>(raw: string, guard: JsonGuard<T>, label: string, fileP
   } catch (error) {
     throw new Error(`Invalid ${label} at ${filePath}: ${formatError(error)}`, { cause: error });
   }
-}
-
-function isFileNotFound(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export const reviewStore = new ReviewStore();

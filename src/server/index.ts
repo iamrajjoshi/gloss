@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { captureCommitRangeDiff } from '../cli/git';
 import { countCommentFiles } from '../shared/comments';
+import { formatError, isFileNotFound } from '../shared/errors';
+import { captureCommitRangeDiff } from '../shared/git-diff';
+import type { JsonValue } from '../shared/json';
 import { packageVersion } from '../shared/paths';
 import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
@@ -369,7 +371,10 @@ async function serveAsset(c: Context) {
         'content-type': mimeTypes[path.extname(assetPath)] ?? 'application/octet-stream'
       }
     });
-  } catch {
+  } catch (error) {
+    if (!isFileNotFound(error)) {
+      throw error;
+    }
     return new Response('Not found', { status: 404 });
   }
 }
@@ -380,7 +385,10 @@ async function serveIndex() {
     return new Response(body, {
       headers: { 'content-type': 'text/html; charset=utf-8' }
     });
-  } catch {
+  } catch (error) {
+    if (!isFileNotFound(error)) {
+      throw error;
+    }
     return new Response('Gloss web assets are missing. Run pnpm build.', { status: 500 });
   }
 }
@@ -392,7 +400,10 @@ function serveRootFile(fileName: string, contentType: string) {
       return new Response(body, {
         headers: { 'content-type': contentType }
       });
-    } catch {
+    } catch (error) {
+      if (!isFileNotFound(error)) {
+        throw error;
+      }
       return new Response(`${fileName} is missing. Run pnpm build.`, { status: 404 });
     }
   };
@@ -403,7 +414,7 @@ async function readJsonBody<T>(
   guard: JsonGuard<T>,
   label: string
 ): Promise<{ ok: true; body: T } | { ok: false; response: Response }> {
-  let body: unknown;
+  let body: JsonValue;
   try {
     body = await c.req.json();
   } catch (error) {
@@ -423,20 +434,7 @@ async function readJsonBody<T>(
   }
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function isPathWithin(parentPath: string, childPath: string): boolean {
   const relative = path.relative(parentPath, childPath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function isFileNotFound(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 'ENOENT'
-  );
 }

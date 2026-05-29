@@ -171,7 +171,7 @@ Mark a submitted review handled after applying feedback:
 gloss resolve <reviewId> --summary "Applied review feedback"
 ```
 
-Mark one submitted comment handled while work is in progress:
+Mark one submitted comment handled:
 
 ```bash
 gloss resolve <reviewId> --comment <commentId> --summary "Applied this comment"

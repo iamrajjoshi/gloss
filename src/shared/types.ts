@@ -1,6 +1,10 @@
-export type Side = 'L' | 'R';
+export const SIDES = ['L', 'R'] as const;
 
-export type ReviewStatus = 'pending' | 'submitted' | 'cancelled' | 'resolved';
+export type Side = (typeof SIDES)[number];
+
+export const REVIEW_STATUSES = ['pending', 'submitted', 'cancelled', 'resolved'] as const;
+
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
 export interface Comment {
   id: string;
@@ -13,7 +17,9 @@ export interface Comment {
   createdAt: string;
 }
 
-export type DiffLineType = 'context' | 'add' | 'delete';
+export const DIFF_LINE_TYPES = ['context', 'add', 'delete'] as const;
+
+export type DiffLineType = (typeof DIFF_LINE_TYPES)[number];
 
 export interface DiffLine {
   type: DiffLineType;
@@ -44,11 +50,20 @@ export interface DiffFile {
   hunks: DiffHunk[];
 }
 
-export type DiffScopeMode = 'working' | 'branch' | 'explicit';
+export const DIFF_SCOPE_MODES = ['working', 'branch', 'explicit'] as const;
 
-export type DiffFallbackReason = 'working-tree-clean' | 'missing-branch-base' | null;
+export type DiffScopeMode = (typeof DIFF_SCOPE_MODES)[number];
 
-interface DiffRef {
+export const DIFF_FALLBACK_REASONS = ['working-tree-clean', 'missing-branch-base'] as const;
+
+export type DiffFallbackReason = (typeof DIFF_FALLBACK_REASONS)[number] | null;
+
+export interface BaseRef {
+  ref: string;
+  sha: string;
+}
+
+export interface DiffRef {
   ref: string;
   sha: string | null;
 }
@@ -92,13 +107,13 @@ export interface CommitRangeDiffResponse {
 interface DiffScope {
   mode: DiffScopeMode;
   requestedBase: string | null;
-  base: { ref: string; sha: string };
+  base: BaseRef;
   comparison: DiffRef;
   fallbackReason: DiffFallbackReason;
 }
 
 export interface DiffPayload {
-  base: { ref: string; sha: string };
+  base: BaseRef;
   branch: string | null;
   cwd: string;
   scope: DiffScope;
@@ -132,7 +147,9 @@ export interface FeedbackBundle {
   comments: Comment[];
 }
 
-type ResolutionStatus = 'partial' | 'resolved';
+export const RESOLUTION_STATUSES = ['partial', 'resolved'] as const;
+
+type ResolutionStatus = (typeof RESOLUTION_STATUSES)[number];
 
 export interface ResolvedComment {
   commentId: string;
@@ -165,7 +182,13 @@ export interface ResolveResult {
   resolution: ResolutionBundle;
 }
 
-export type ReviewUpdateReason = 'review-resolved' | 'comment-resolved' | 'comment-reopened';
+export const REVIEW_UPDATE_REASONS = [
+  'review-resolved',
+  'comment-resolved',
+  'comment-reopened'
+] as const;
+
+export type ReviewUpdateReason = (typeof REVIEW_UPDATE_REASONS)[number];
 
 export type ReviewEvent =
   | { type: 'review.opened'; reviewId: string }

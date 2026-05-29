@@ -1,5 +1,5 @@
-import { languageForPath } from '../shared/language';
-import type { DiffFile, DiffHunk, DiffLine } from '../shared/types';
+import { languageForPath } from './language';
+import type { DiffFile, DiffHunk, DiffLine } from './types';
 
 const hunkHeaderPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 

@@ -3,6 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { JsonValue } from '../shared/json';
 import {
   globalReviewDir,
   globalReviewFeedbackFile,
@@ -241,7 +242,7 @@ describe('Gloss review API global persistence', () => {
       rawDiff: 'diff --git a/api.ts b/api.ts\n',
       files: [makeApiDiff().files[0], { ...makeApiDiff().files[0], path: 'second.ts' }]
     }));
-    vi.doMock('../cli/git', () => ({ captureCommitRangeDiff }));
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff }));
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const diff = makeApiDiffWithCommits();
@@ -282,7 +283,7 @@ describe('Gloss review API global persistence', () => {
 
   it('rejects invalid commit range requests', async () => {
     const captureCommitRangeDiff = vi.fn();
-    vi.doMock('../cli/git', () => ({ captureCommitRangeDiff }));
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff }));
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const noCommitsCreatedResponse = await app.request('/api/reviews', {
@@ -697,7 +698,7 @@ async function readReviewUpdatedEvents(
 }
 
 async function responseJson<T>(response: Response, guard: JsonGuard<T>, label: string): Promise<T> {
-  const value: unknown = await response.json();
+  const value: JsonValue = await response.json();
   return parseJsonValue(value, guard, label);
 }
 
