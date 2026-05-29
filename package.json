@@ -31,6 +31,8 @@
   },
   "dependencies": {
     "@hono/node-server": "1.19.14",
+    "@shikijs/langs": "4.1.0",
+    "@shikijs/themes": "4.1.0",
     "@tailwindcss/vite": "4.3.0",
     "commander": "14.0.3",
     "execa": "9.6.1",
@@ -40,6 +42,7 @@
     "open": "10.2.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "shiki": "4.1.0",
     "ulid": "3.0.2",
     "zustand": "5.0.13"
   },
