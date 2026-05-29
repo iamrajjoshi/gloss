@@ -1,5 +1,5 @@
 import { CheckCircle2, MessageSquare } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DiffFile, DiffLine, ReviewRecord, Side } from '../../shared/types';
 import { useReviewStore } from '../store';
@@ -20,10 +20,16 @@ interface SelectionRef {
 }
 
 export function DiffView({
+  activeFilePath = null,
+  emptyState = null,
+  files,
   record,
   readOnly = false,
   wrapLines = false
 }: {
+  activeFilePath?: string | null;
+  emptyState?: ReactNode;
+  files?: DiffFile[];
   record: ReviewRecord;
   readOnly?: boolean;
   wrapLines?: boolean;
@@ -31,39 +37,60 @@ export function DiffView({
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
+  const renderedFiles = files ?? record.diff.files;
+
+  useEffect(() => {
+    if (!activeFilePath) {
+      return;
+    }
+    setCollapsedFiles((current) => {
+      if (!current.has(activeFilePath)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.delete(activeFilePath);
+      return next;
+    });
+  }, [activeFilePath]);
 
   return (
     <section className="diff-stack">
-      {record.diff.files.length === 0 ? (
-        <EmptyDiff record={record} />
-      ) : (
-        record.diff.files.map((file) => {
-          const collapsed = collapsedFiles.has(file.path);
-          return (
-            <article className="file-card" key={`${file.oldPath ?? file.path}:${file.path}`}>
-              <FileHeader
-                file={file}
-                collapsed={collapsed}
-                onToggle={() => {
-                  if (!collapsed && draft?.filePath === file.path) {
-                    setDraft(null);
-                  }
-                  setCollapsedFiles((current) => {
-                    const next = new Set(current);
-                    next.has(file.path) ? next.delete(file.path) : next.add(file.path);
-                    return next;
-                  });
-                }}
-              />
-              {collapsed ? null : (
-                <DiffFileTable file={file} readOnly={readOnly} wrapLines={wrapLines} />
-              )}
-            </article>
-          );
-        })
-      )}
+      {renderedFiles.length === 0
+        ? (emptyState ?? <EmptyDiff record={record} />)
+        : renderedFiles.map((file) => {
+            const collapsed = collapsedFiles.has(file.path);
+            return (
+              <article
+                className={`file-card ${activeFilePath === file.path ? 'active' : ''}`}
+                id={fileCardElementId(file.path)}
+                key={`${file.oldPath ?? file.path}:${file.path}`}
+              >
+                <FileHeader
+                  file={file}
+                  collapsed={collapsed}
+                  onToggle={() => {
+                    if (!collapsed && draft?.filePath === file.path) {
+                      setDraft(null);
+                    }
+                    setCollapsedFiles((current) => {
+                      const next = new Set(current);
+                      next.has(file.path) ? next.delete(file.path) : next.add(file.path);
+                      return next;
+                    });
+                  }}
+                />
+                {collapsed ? null : (
+                  <DiffFileTable file={file} readOnly={readOnly} wrapLines={wrapLines} />
+                )}
+              </article>
+            );
+          })}
     </section>
   );
+}
+
+export function fileCardElementId(filePath: string): string {
+  return `gloss-file-${encodeURIComponent(filePath)}`;
 }
 
 function EmptyDiff({ record }: { record: ReviewRecord }) {
