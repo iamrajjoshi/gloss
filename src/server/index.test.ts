@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,8 +10,10 @@ import {
 } from '../shared/paths';
 import type { ReviewEvent } from '../shared/types';
 import {
+  isCommitRangeDiffResponse,
   isCreateReviewResponse,
   isListReviewsResponse,
+  isOpenFileResponse,
   isOpenResult,
   isResolveResult,
   isReviewEvent,
@@ -40,6 +42,8 @@ afterEach(async () => {
   } else {
     process.env.GLOSS_STATE_DIR = originalStateDir;
   }
+  vi.doUnmock('./local-open');
+  vi.doUnmock('../cli/git');
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -133,6 +137,44 @@ describe('Gloss review API global persistence', () => {
     expect(resolvedSubmitResponse.status).toBe(409);
   });
 
+  it('accepts and reloads review payloads with per-commit diffs', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const diff = makeApiDiff();
+    diff.commitDiffs = [
+      {
+        commit: {
+          sha: '1234567890abcdef1234567890abcdef12345678',
+          shortSha: '1234567',
+          subject: 'add api file',
+          authorName: 'Gloss Test',
+          authorEmail: 'gloss@example.com',
+          authoredAt: '2026-05-22T12:00:00.000Z',
+          committedAt: '2026-05-22T12:00:01.000Z'
+        },
+        stats: diff.stats,
+        rawDiff: diff.rawDiff,
+        files: diff.files
+      }
+    ];
+
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
+    const hydrated = await responseJson(hydratedResponse, isReviewRecord, 'review response');
+
+    expect(createdResponse.status).toBe(201);
+    expect(hydrated.diff.commitDiffs?.[0]?.commit.subject).toBe('add api file');
+  });
+
   it('rejects malformed JSON request bodies', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
@@ -161,6 +203,239 @@ describe('Gloss review API global persistence', () => {
 
     expect(response.status).toBe(400);
     expect(body.error).toMatch(/invalid JSON body/);
+  });
+
+  it('opens changed files locally after validating the review path', async () => {
+    const openLocalPath = vi.fn(async (_filePath: string) => undefined);
+    vi.doMock('./local-open', () => ({ openLocalPath }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const openResponse = await app.request(`/api/reviews/${created.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'api.ts' })
+    });
+    const opened = await responseJson(openResponse, isOpenFileResponse, 'open file response');
+    const expectedPath = await realpath(path.join(repoRoot, 'api.ts'));
+
+    expect(openResponse.status).toBe(200);
+    expect(opened).toEqual({ ok: true, path: expectedPath });
+    expect(openLocalPath).toHaveBeenCalledWith(expectedPath);
+  });
+
+  it('returns a combined diff for a valid commit range', async () => {
+    const captureCommitRangeDiff = vi.fn(async (_fromSha: string, _toSha: string) => ({
+      stats: { files: 2, additions: 2, deletions: 0 },
+      rawDiff: 'diff --git a/api.ts b/api.ts\n',
+      files: [makeApiDiff().files[0], { ...makeApiDiff().files[0], path: 'second.ts' }]
+    }));
+    vi.doMock('../cli/git', () => ({ captureCommitRangeDiff }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const diff = makeApiDiffWithCommits();
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const rangeResponse = await app.request(`/api/reviews/${created.meta.id}/commits/range`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        fromSha: diff.commitDiffs?.[0]?.commit.sha,
+        toSha: diff.commitDiffs?.[1]?.commit.sha
+      })
+    });
+    const range = await responseJson(
+      rangeResponse,
+      isCommitRangeDiffResponse,
+      'commit range diff response'
+    );
+
+    expect(rangeResponse.status).toBe(200);
+    expect(range.stats).toEqual({ files: 2, additions: 2, deletions: 0 });
+    expect(range.files.map((file) => file.path)).toEqual(['api.ts', 'second.ts']);
+    expect(captureCommitRangeDiff).toHaveBeenCalledWith(
+      diff.commitDiffs?.[0]?.commit.sha,
+      diff.commitDiffs?.[1]?.commit.sha,
+      repoRoot
+    );
+  });
+
+  it('rejects invalid commit range requests', async () => {
+    const captureCommitRangeDiff = vi.fn();
+    vi.doMock('../cli/git', () => ({ captureCommitRangeDiff }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const noCommitsCreatedResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const noCommitsCreated = await responseJson(
+      noCommitsCreatedResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const diff = makeApiDiffWithCommits();
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const unavailableResponse = await app.request(
+      `/api/reviews/${noCommitsCreated.meta.id}/commits/range`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ fromSha: 'missing', toSha: 'missing' })
+      }
+    );
+    const unknownResponse = await app.request(`/api/reviews/${created.meta.id}/commits/range`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fromSha: 'missing', toSha: diff.commitDiffs?.[1]?.commit.sha })
+    });
+    const reversedResponse = await app.request(`/api/reviews/${created.meta.id}/commits/range`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        fromSha: diff.commitDiffs?.[1]?.commit.sha,
+        toSha: diff.commitDiffs?.[0]?.commit.sha
+      })
+    });
+
+    expect(unavailableResponse.status).toBe(409);
+    expect(unknownResponse.status).toBe(404);
+    expect(reversedResponse.status).toBe(400);
+    expect(captureCommitRangeDiff).not.toHaveBeenCalled();
+  });
+
+  it('opens files that are present only in per-commit diffs', async () => {
+    const openLocalPath = vi.fn(async (_filePath: string) => undefined);
+    vi.doMock('./local-open', () => ({ openLocalPath }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
+    const diff = makeApiDiff();
+    const commitFiles = diff.files;
+    diff.files = [];
+    diff.stats = { files: 0, additions: 0, deletions: 0 };
+    diff.commitDiffs = [
+      {
+        commit: {
+          sha: '1234567890abcdef1234567890abcdef12345678',
+          shortSha: '1234567',
+          subject: 'add api file',
+          authorName: 'Gloss Test',
+          authorEmail: 'gloss@example.com',
+          authoredAt: '2026-05-22T12:00:00.000Z',
+          committedAt: '2026-05-22T12:00:01.000Z'
+        },
+        stats: { files: 1, additions: 1, deletions: 0 },
+        rawDiff: diff.rawDiff,
+        files: commitFiles
+      }
+    ];
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const openResponse = await app.request(`/api/reviews/${created.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'api.ts' })
+    });
+
+    expect(openResponse.status).toBe(200);
+    expect(openLocalPath).toHaveBeenCalledWith(await realpath(path.join(repoRoot, 'api.ts')));
+  });
+
+  it('rejects invalid local file open requests', async () => {
+    const openLocalPath = vi.fn(async (_filePath: string) => undefined);
+    vi.doMock('./local-open', () => ({ openLocalPath }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const traversalResponse = await app.request(`/api/reviews/${created.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: '../api.ts' })
+    });
+    const missingResponse = await app.request(`/api/reviews/${created.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'api.ts' })
+    });
+    const notReviewedResponse = await app.request(`/api/reviews/${created.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'other.ts' })
+    });
+    const deletedDiff = makeApiDiff();
+    deletedDiff.files[0].isDeleted = true;
+    const deletedCreatedResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(deletedDiff)
+    });
+    const deletedCreated = await responseJson(
+      deletedCreatedResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const deletedResponse = await app.request(`/api/reviews/${deletedCreated.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'api.ts' })
+    });
+
+    expect(traversalResponse.status).toBe(400);
+    expect(missingResponse.status).toBe(404);
+    expect(notReviewedResponse.status).toBe(404);
+    expect(deletedResponse.status).toBe(409);
+    expect(openLocalPath).not.toHaveBeenCalled();
   });
 
   it('resolves and reopens individual comments through the API', async () => {
@@ -364,6 +639,47 @@ function makeApiDiff() {
     cwd: repoRoot,
     filePath: 'api.ts'
   });
+}
+
+function makeApiDiffWithCommits() {
+  const first = makeApiDiff();
+  const second = makeDiff({
+    branch: 'raj--gloss--api',
+    code: 'export const second = true;',
+    cwd: repoRoot,
+    filePath: 'second.ts'
+  });
+  first.commitDiffs = [
+    {
+      commit: {
+        sha: '1234567890abcdef1234567890abcdef12345678',
+        shortSha: '1234567',
+        subject: 'add api file',
+        authorName: 'Gloss Test',
+        authorEmail: 'gloss@example.com',
+        authoredAt: '2026-05-22T12:00:00.000Z',
+        committedAt: '2026-05-22T12:00:01.000Z'
+      },
+      stats: first.stats,
+      rawDiff: first.rawDiff,
+      files: first.files
+    },
+    {
+      commit: {
+        sha: 'abcdef1234567890abcdef1234567890abcdef12',
+        shortSha: 'abcdef1',
+        subject: 'add second file',
+        authorName: 'Gloss Test',
+        authorEmail: 'gloss@example.com',
+        authoredAt: '2026-05-22T12:01:00.000Z',
+        committedAt: '2026-05-22T12:01:01.000Z'
+      },
+      stats: second.stats,
+      rawDiff: second.rawDiff,
+      files: second.files
+    }
+  ];
+  return first;
 }
 
 async function readReviewUpdatedEvents(

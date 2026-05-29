@@ -1,28 +1,34 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { captureCommitRangeDiff } from '../cli/git';
 import { countCommentFiles } from '../shared/comments';
 import { packageVersion } from '../shared/paths';
 import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
+  CommitRangeDiffResponse,
   CreateReviewResponse,
   HealthResponse,
   ListReviewsResponse,
+  OpenFileResponse,
   OpenResult,
   ResolutionRequest,
   ReviewEvent,
   SubmitReviewRequest
 } from '../shared/types';
 import {
+  isCommitRangeDiffRequest,
   isDiffPayload,
+  isOpenFileRequest,
   isResolutionRequest,
   isSubmitReviewRequest,
   type JsonGuard,
   parseJsonValue
 } from '../shared/validation';
+import { openLocalPath } from './local-open';
 import { reviewStore } from './store';
 
 const webRoot = fileURLToPath(new URL('../web', import.meta.url));
@@ -174,6 +180,112 @@ export function createApp(origin: string): Hono {
     return c.json(response);
   });
 
+  app.post('/api/reviews/:id/commits/range', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isCommitRangeDiffRequest, 'commit range diff request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+
+    const commitDiffs = existing.diff.commitDiffs ?? [];
+    if (commitDiffs.length === 0) {
+      return c.json({ error: 'commit ranges are only available for branch reviews' }, 409);
+    }
+
+    const { fromSha, toSha } = parsed.body;
+    const fromIndex = commitDiffs.findIndex((commitDiff) => commitDiff.commit.sha === fromSha);
+    const toIndex = commitDiffs.findIndex((commitDiff) => commitDiff.commit.sha === toSha);
+    if (fromIndex < 0 || toIndex < 0) {
+      return c.json({ error: 'commit range must use commits from this review' }, 404);
+    }
+    if (fromIndex > toIndex) {
+      return c.json({ error: 'fromSha must come before or match toSha' }, 400);
+    }
+
+    const diff =
+      fromSha === toSha
+        ? commitDiffs[fromIndex]
+        : await captureCommitRangeDiff(fromSha, toSha, existing.diff.cwd);
+    const response: CommitRangeDiffResponse = {
+      fromSha,
+      toSha,
+      stats: diff.stats,
+      rawDiff: diff.rawDiff,
+      files: diff.files
+    };
+    return c.json(response);
+  });
+
+  app.post('/api/reviews/:id/files/open', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isOpenFileRequest, 'open file request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+
+    const { filePath } = parsed.body;
+    if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath)) {
+      return c.json({ error: 'filePath must be a repo-relative path' }, 400);
+    }
+
+    const repoRoot = path.resolve(existing.diff.cwd);
+    const requestedAbsolutePath = path.resolve(repoRoot, filePath);
+    if (!isPathWithin(repoRoot, requestedAbsolutePath)) {
+      return c.json({ error: 'filePath must stay within the review cwd' }, 400);
+    }
+
+    const reviewFiles = [
+      ...existing.diff.files,
+      ...(existing.diff.commitDiffs ?? []).flatMap((commitDiff) => commitDiff.files)
+    ].filter((file) => file.path === filePath);
+    if (reviewFiles.length === 0) {
+      return c.json({ error: 'file is not part of this review' }, 404);
+    }
+    if (reviewFiles.every((file) => file.isDeleted)) {
+      return c.json({ error: 'deleted files cannot be opened locally' }, 409);
+    }
+
+    let realRepoRoot: string;
+    let realFilePath: string;
+    try {
+      [realRepoRoot, realFilePath] = await Promise.all([
+        realpath(repoRoot),
+        realpath(requestedAbsolutePath)
+      ]);
+    } catch (error) {
+      if (isFileNotFound(error)) {
+        return c.json({ error: 'file no longer exists on disk' }, 404);
+      }
+      throw error;
+    }
+
+    if (!isPathWithin(realRepoRoot, realFilePath)) {
+      return c.json({ error: 'filePath must stay within the review cwd' }, 400);
+    }
+
+    const fileStats = await stat(realFilePath);
+    if (!fileStats.isFile()) {
+      return c.json({ error: 'path is not a file' }, 409);
+    }
+
+    try {
+      await openLocalPath(realFilePath);
+    } catch (error) {
+      return c.json({ error: `could not open file: ${formatError(error)}` }, 500);
+    }
+
+    const response: OpenFileResponse = { ok: true, path: realFilePath };
+    return c.json(response);
+  });
+
   app.post('/api/reviews/:id/resolved', async (c) => {
     const id = c.req.param('id');
     const existing = await reviewStore.get(id);
@@ -313,4 +425,18 @@ async function readJsonBody<T>(
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isPathWithin(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isFileNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  );
 }

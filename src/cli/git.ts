@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import type {
+  CommitDiff,
   DiffFallbackReason,
   DiffFile,
   DiffPayload,
@@ -46,6 +47,7 @@ interface PayloadOptions {
   requestedBase: string | null;
   comparison: { ref: string; sha: string | null };
   fallbackReason: DiffFallbackReason;
+  commitDiffs?: CommitDiff[];
 }
 
 function summarize(files: DiffFile[]): DiffStats {
@@ -67,7 +69,8 @@ function buildPayload({
   mode,
   requestedBase,
   comparison,
-  fallbackReason
+  fallbackReason,
+  commitDiffs
 }: PayloadOptions): DiffPayload {
   const files = parseUnifiedDiff(rawDiff);
   return {
@@ -84,6 +87,7 @@ function buildPayload({
     stats: summarize(files),
     rawDiff,
     files,
+    ...(commitDiffs ? { commitDiffs } : {}),
     capturedAt: new Date().toISOString()
   };
 }
@@ -148,6 +152,78 @@ async function resolveBranchBase(repoRoot: string): Promise<ResolvedBranchBase |
   return null;
 }
 
+async function captureCommitDiffs(
+  baseSha: string,
+  comparisonRef: string,
+  repoRoot: string
+): Promise<CommitDiff[]> {
+  const rawLog = await gitMaybe(
+    [
+      'log',
+      '--reverse',
+      '--format=%H%x00%h%x00%an%x00%ae%x00%aI%x00%cI%x00%s%x1e',
+      `${baseSha}..${comparisonRef}`
+    ],
+    repoRoot
+  );
+  if (!rawLog) {
+    return [];
+  }
+
+  const commits = rawLog
+    .split('\x1e')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [
+        sha = '',
+        shortSha = '',
+        authorName = '',
+        authorEmail = '',
+        authoredAt = '',
+        committedAt = '',
+        ...subjectParts
+      ] = entry.split('\x00');
+      return {
+        sha,
+        shortSha,
+        subject: subjectParts.join('\x00'),
+        authorName,
+        authorEmail,
+        authoredAt,
+        committedAt
+      };
+    })
+    .filter((commit) => commit.sha && commit.shortSha);
+
+  const commitDiffs: CommitDiff[] = [];
+  for (const commit of commits) {
+    const rawDiff = await git([...DIFF_ARGS, `${commit.sha}^`, commit.sha, '--'], repoRoot);
+    const files = parseUnifiedDiff(rawDiff);
+    commitDiffs.push({
+      commit,
+      stats: summarize(files),
+      rawDiff,
+      files
+    });
+  }
+  return commitDiffs;
+}
+
+export async function captureCommitRangeDiff(
+  fromSha: string,
+  toSha: string,
+  repoRoot: string
+): Promise<Pick<CommitDiff, 'stats' | 'rawDiff' | 'files'>> {
+  const rawDiff = await git([...DIFF_ARGS, `${fromSha}^`, toSha, '--'], repoRoot);
+  const files = parseUnifiedDiff(rawDiff);
+  return {
+    stats: summarize(files),
+    rawDiff,
+    files
+  };
+}
+
 export async function captureDiff(baseRef?: string, cwd = process.cwd()): Promise<DiffPayload> {
   const repoRoot = await getRepoRoot(cwd);
   const [headSha, branch] = await Promise.all([
@@ -200,7 +276,10 @@ export async function captureDiff(baseRef?: string, cwd = process.cwd()): Promis
     });
   }
 
-  const rawDiff = await git([...DIFF_ARGS, branchBase.mergeBaseSha, 'HEAD', '--'], repoRoot);
+  const [rawDiff, commitDiffs] = await Promise.all([
+    git([...DIFF_ARGS, branchBase.mergeBaseSha, 'HEAD', '--'], repoRoot),
+    captureCommitDiffs(branchBase.mergeBaseSha, 'HEAD', repoRoot)
+  ]);
   return buildPayload({
     repoRoot,
     branch,
@@ -209,7 +288,8 @@ export async function captureDiff(baseRef?: string, cwd = process.cwd()): Promis
     mode: 'branch',
     requestedBase: null,
     comparison: { ref: 'HEAD', sha: headSha },
-    fallbackReason: 'working-tree-clean'
+    fallbackReason: 'working-tree-clean',
+    commitDiffs
   });
 }
 
