@@ -11,6 +11,7 @@ import {
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { reviewResolutionCounts } from '../../shared/comments';
+import { reviewDisplayTitle } from '../../shared/review-title';
 import { isResolvableReviewStatus } from '../../shared/reviews';
 import type { ReviewRecord } from '../../shared/types';
 import { isReviewEvent, parseJson } from '../../shared/validation';
@@ -47,6 +48,7 @@ export function Review({ reviewId }: { reviewId: string }) {
   });
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
+  const displayTitle = record ? reviewDisplayTitle(record) : null;
   const reviewFiles = record?.diff.files ?? [];
   const extensionBuckets = useMemo(() => buildExtensionBuckets(reviewFiles), [reviewFiles]);
   const extensionIds = useMemo(
@@ -118,6 +120,12 @@ export function Review({ reviewId }: { reviewId: string }) {
       events.close();
     };
   }, [reviewId, reloadReview]);
+
+  useEffect(() => {
+    if (displayTitle) {
+      document.title = displayTitle;
+    }
+  }, [displayTitle]);
 
   useEffect(() => {
     if (!recordId) {
@@ -285,8 +293,7 @@ export function Review({ reviewId }: { reviewId: string }) {
         <div className="topbar-main">
           <img className="brand-mark" src="/logo.svg" alt="" />
           <div className="review-heading">
-            <p className="product-name">Gloss</p>
-            <h1>{scopeTitle(record)}</h1>
+            <h1>{displayTitle}</h1>
             <div className="meta-row">
               <span title={`${scope.base.ref} (${scope.base.sha})`}>
                 Base {scope.base.ref} ({scope.base.sha.slice(0, 7)})
@@ -476,15 +483,4 @@ function formatTimestamp(timestamp: string): string {
     dateStyle: 'medium',
     timeStyle: 'short'
   }).format(new Date(timestamp));
-}
-
-function scopeTitle(record: ReviewRecord): string {
-  switch (record.diff.scope.mode) {
-    case 'branch':
-      return 'Branch diff';
-    case 'explicit':
-      return `Diff against ${record.diff.scope.requestedBase ?? record.diff.base.ref}`;
-    case 'working':
-      return 'Working changes';
-  }
 }

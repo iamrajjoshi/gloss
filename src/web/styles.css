@@ -282,8 +282,8 @@ pre {
 .topbar-main {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
-  gap: var(--spacing-16);
+  align-items: center;
+  gap: var(--spacing-12);
 }
 
 .review-heading {
@@ -292,10 +292,13 @@ pre {
 
 .review-heading h1 {
   margin: 0;
+  overflow: hidden;
   color: var(--text-primary);
   font-size: var(--text-subheading);
   font-weight: var(--font-weight-medium);
   letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand-row {
@@ -312,18 +315,11 @@ pre {
   letter-spacing: 0;
 }
 
-.product-name {
-  margin: 0 0 2px;
-  color: var(--text-secondary);
-  font-size: var(--text-small);
-  font-weight: var(--font-weight-medium);
-}
-
 .meta-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 7px;
+  margin-top: var(--spacing-8);
 }
 
 .meta-row span {
