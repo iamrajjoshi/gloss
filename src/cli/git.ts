@@ -1,13 +1,14 @@
 import { execa } from 'execa';
+import { parseUnifiedDiff } from '../shared/diff-parser';
+import { summarizeDiffFiles } from '../shared/diff-stats';
 import type {
+  BaseRef,
   CommitDiff,
   DiffFallbackReason,
-  DiffFile,
   DiffPayload,
-  DiffScopeMode,
-  DiffStats
+  DiffRef,
+  DiffScopeMode
 } from '../shared/types';
-import { parseUnifiedDiff } from './diff-parser';
 
 const DIFF_ARGS = ['diff', '--no-color', '--find-renames', '--find-copies'];
 
@@ -42,23 +43,12 @@ interface PayloadOptions {
   repoRoot: string;
   branch: string | null;
   rawDiff: string;
-  base: { ref: string; sha: string };
+  base: BaseRef;
   mode: DiffScopeMode;
   requestedBase: string | null;
-  comparison: { ref: string; sha: string | null };
+  comparison: DiffRef;
   fallbackReason: DiffFallbackReason;
   commitDiffs?: CommitDiff[];
-}
-
-function summarize(files: DiffFile[]): DiffStats {
-  return files.reduce(
-    (stats, file) => ({
-      files: stats.files + 1,
-      additions: stats.additions + file.additions,
-      deletions: stats.deletions + file.deletions
-    }),
-    { files: 0, additions: 0, deletions: 0 }
-  );
 }
 
 function buildPayload({
@@ -84,7 +74,7 @@ function buildPayload({
       comparison,
       fallbackReason
     },
-    stats: summarize(files),
+    stats: summarizeDiffFiles(files),
     rawDiff,
     files,
     ...(commitDiffs ? { commitDiffs } : {}),
@@ -202,26 +192,12 @@ async function captureCommitDiffs(
     const files = parseUnifiedDiff(rawDiff);
     commitDiffs.push({
       commit,
-      stats: summarize(files),
+      stats: summarizeDiffFiles(files),
       rawDiff,
       files
     });
   }
   return commitDiffs;
-}
-
-export async function captureCommitRangeDiff(
-  fromSha: string,
-  toSha: string,
-  repoRoot: string
-): Promise<Pick<CommitDiff, 'stats' | 'rawDiff' | 'files'>> {
-  const rawDiff = await git([...DIFF_ARGS, `${fromSha}^`, toSha, '--'], repoRoot);
-  const files = parseUnifiedDiff(rawDiff);
-  return {
-    stats: summarize(files),
-    rawDiff,
-    files
-  };
 }
 
 export async function captureDiff(baseRef?: string, cwd = process.cwd()): Promise<DiffPayload> {

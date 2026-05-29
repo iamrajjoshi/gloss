@@ -1,6 +1,7 @@
 import { Check, Send, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatLineRange } from '../../shared/comments';
+import { formatError } from '../../shared/errors';
 import { submitReview } from '../api';
 import { isSubmitReviewShortcut } from '../shortcuts';
 import { useReviewStore } from '../store';
@@ -31,13 +32,13 @@ export function SubmitBar({
       setMessage('Submitted');
       try {
         await onSubmitted?.();
-      } catch {
-        // The feedback handoff succeeded; leave the submitted state visible even if refresh fails.
+      } catch (error) {
+        setMessage(`Submitted, but refresh failed: ${formatError(error)}`);
       }
     } catch (error) {
       submittingRef.current = false;
       setState('error');
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(formatError(error));
     }
   }, [canSubmit, comments, onSubmitted, reviewId]);
 

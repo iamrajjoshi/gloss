@@ -1,3 +1,4 @@
+import type { JsonValue } from '../shared/json';
 import type {
   Comment,
   CommitRangeDiffRequest,
@@ -21,7 +22,7 @@ async function json<T>(response: Response, guard: JsonGuard<T>, label: string): 
   if (!response.ok) {
     throw new Error(`${response.status}: ${await response.text()}`);
   }
-  const value: unknown = await response.json();
+  const value: JsonValue = await response.json();
   return parseJsonValue(value, guard, label);
 }
 

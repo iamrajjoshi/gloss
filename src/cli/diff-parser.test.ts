@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseUnifiedDiff } from './diff-parser';
+import { parseUnifiedDiff } from '../shared/diff-parser';
 
 describe('parseUnifiedDiff', () => {
   it('parses additions, deletions, renames, and hunk line numbers', () => {

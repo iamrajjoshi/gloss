@@ -5,6 +5,7 @@ import { serve } from '@hono/node-server';
 import { execa } from 'execa';
 import getPort from 'get-port';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { JsonValue } from '../shared/json';
 import {
   globalReviewMetaFile,
   globalReviewResolvedFile,
@@ -48,7 +49,7 @@ afterEach(async () => {
 });
 
 async function responseJson<T>(response: Response, guard: JsonGuard<T>, label: string): Promise<T> {
-  const value: unknown = await response.json();
+  const value: JsonValue = await response.json();
   return parseJsonValue(value, guard, label);
 }
 

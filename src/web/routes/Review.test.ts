@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type FileFilterState, syncFileFilterState } from './Review';
+import { type FileFilterState, syncFileFilterState } from './review-filter';
 
 describe('syncFileFilterState', () => {
   it('selects new extension buckets when every previous bucket was selected', () => {

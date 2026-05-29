@@ -25,18 +25,14 @@ import type {
 } from '../../shared/types';
 import { isReviewEvent, parseJson } from '../../shared/validation';
 import { fetchCommitRangeDiff, fetchReview, openReviewFile } from '../api';
-import { DiffView, fileCardElementId } from '../components/DiffView';
-import { buildExtensionBuckets, FileTree, filterDiffFiles } from '../components/FileTree';
+import { DiffView } from '../components/DiffView';
+import { fileCardElementId } from '../components/diff-view-helpers';
+import { FileTree } from '../components/FileTree';
+import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-helpers';
 import { SubmitBar } from '../components/SubmitBar';
 import { useReviewStore } from '../store';
 import { loadViewedFiles, saveViewedFiles } from '../viewed-files';
-
-export interface FileFilterState {
-  extensionIds: string[];
-  reviewId: string | null;
-  searchQuery: string;
-  selectedExtensionIds: Set<string>;
-}
+import { type FileFilterState, syncFileFilterState } from './review-filter';
 
 type CommitView =
   | { mode: 'all' }
@@ -936,45 +932,13 @@ function formatRelativeTime(timestamp: string): string {
     ['minute', 60],
     ['second', 1]
   ];
-  const fallbackUnit = units[units.length - 1];
-  if (!fallbackUnit) {
-    return 'recently';
-  }
   const [unit, secondsPerUnit] =
-    units.find(([, unitSeconds]) => Math.abs(diffSeconds) >= unitSeconds) ?? fallbackUnit;
+    units.find(([, unitSeconds]) => Math.abs(diffSeconds) >= unitSeconds) ??
+    units[units.length - 1];
   return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(
     Math.round(diffSeconds / secondsPerUnit),
     unit
   );
-}
-
-export function syncFileFilterState(
-  current: FileFilterState,
-  recordId: string,
-  extensionIds: string[]
-): FileFilterState {
-  if (current.reviewId !== recordId) {
-    return {
-      extensionIds,
-      reviewId: recordId,
-      searchQuery: '',
-      selectedExtensionIds: new Set(extensionIds)
-    };
-  }
-
-  const previousAllSelected =
-    current.selectedExtensionIds.size === current.extensionIds.length &&
-    current.extensionIds.every((extensionId) => current.selectedExtensionIds.has(extensionId));
-  const selectedExtensionIds = previousAllSelected
-    ? new Set(extensionIds)
-    : new Set(extensionIds.filter((extensionId) => current.selectedExtensionIds.has(extensionId)));
-
-  return {
-    extensionIds,
-    reviewId: recordId,
-    searchQuery: current.searchQuery,
-    selectedExtensionIds
-  };
 }
 
 function ReviewStateBanner({ record }: { record: ReviewRecord }) {

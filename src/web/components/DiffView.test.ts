@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileCardElementId } from './DiffView';
+import { fileCardElementId } from './diff-view-helpers';
 
 describe('fileCardElementId', () => {
   it('generates distinct ids for paths that differ by encoded separators', () => {

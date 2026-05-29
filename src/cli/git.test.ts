@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
-import { captureCommitRangeDiff, captureDiff } from './git';
+import { captureCommitRangeDiff } from '../shared/git-diff';
+import { captureDiff } from './git';
 
 const repos: string[] = [];
 

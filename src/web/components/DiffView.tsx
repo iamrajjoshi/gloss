@@ -1,10 +1,12 @@
 import { CheckCircle2, MessageSquare, Plus } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { diffLineKey, diffLineNumber, diffLineSide } from '../../shared/diff-lines';
 import type { DiffFile, DiffLine, DiffPayload, ReviewRecord, Side } from '../../shared/types';
 import { useReviewStore } from '../store';
 import type { HighlightedDiffLines, SyntaxToken } from '../syntax';
 import { CommentComposer } from './CommentPopover';
+import { fileCardElementId } from './diff-view-helpers';
 import { FileHeader } from './FileHeader';
 
 interface RowRef {
@@ -112,10 +114,6 @@ export function DiffView({
           })}
     </section>
   );
-}
-
-export function fileCardElementId(filePath: string): string {
-  return `gloss-file-${encodeURIComponent(filePath)}`;
 }
 
 function EmptyDiff({ record }: { record: ReviewRecord }) {
@@ -354,8 +352,8 @@ function DiffFileTable({
                   `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
               </div>
               {hunk.lines.map((line) => {
-                const side = sideForLine(line);
-                const lineNumber = side === 'L' ? line.oldLine : line.newLine;
+                const side = diffLineSide(line);
+                const lineNumber = diffLineNumber(line);
                 if (lineNumber == null) {
                   return null;
                 }
@@ -365,7 +363,7 @@ function DiffFileTable({
                   line: lineNumber,
                   snippet: line.content
                 };
-                const visualIndex = visualIndexByLine.get(rowKey(side, lineNumber));
+                const visualIndex = visualIndexByLine.get(diffLineKey(side, lineNumber));
                 const activeVisualRange =
                   visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
                     ? dragVisualRange
@@ -421,7 +419,7 @@ function DiffFileTable({
                       </div>
                       <CodeLine
                         content={line.content}
-                        tokens={highlightedLines?.get(rowKey(side, lineNumber)) ?? null}
+                        tokens={highlightedLines?.get(diffLineKey(side, lineNumber)) ?? null}
                       />
                     </div>
                     {rowComments.map((comment) => {
@@ -514,14 +512,6 @@ function markerForLine(line: DiffLine): string {
   return ' ';
 }
 
-function sideForLine(line: DiffLine): Side {
-  return line.type === 'delete' ? 'L' : 'R';
-}
-
-function lineNumberForLine(line: DiffLine): number | null {
-  return sideForLine(line) === 'L' ? line.oldLine : line.newLine;
-}
-
 function selectionClassForLine(lineNumber: number, startLine: number, endLine: number): string {
   if (startLine === endLine) {
     return 'range-selected range-single';
@@ -540,19 +530,15 @@ function buildVisualIndex(file: DiffFile): Map<string, number> {
   let visualIndex = 0;
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      const side = sideForLine(line);
-      const lineNumber = lineNumberForLine(line);
+      const side = diffLineSide(line);
+      const lineNumber = diffLineNumber(line);
       if (lineNumber != null) {
-        indexByLine.set(rowKey(side, lineNumber), visualIndex);
+        indexByLine.set(diffLineKey(side, lineNumber), visualIndex);
         visualIndex += 1;
       }
     }
   }
   return indexByLine;
-}
-
-function rowKey(side: Side, line: number): string {
-  return `${side}:${line}`;
 }
 
 function visualRangeFor(
@@ -561,8 +547,8 @@ function visualRangeFor(
   startLine: number,
   endLine: number
 ): { start: number; end: number } | null {
-  const startIndex = indexByLine.get(rowKey(side, startLine));
-  const endIndex = indexByLine.get(rowKey(side, endLine));
+  const startIndex = indexByLine.get(diffLineKey(side, startLine));
+  const endIndex = indexByLine.get(diffLineKey(side, endLine));
   if (startIndex == null || endIndex == null) {
     return null;
   }
@@ -592,7 +578,7 @@ function collectVisualSnippet(
 
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      if (lineNumberForLine(line) == null) {
+      if (diffLineNumber(line) == null) {
         continue;
       }
       if (visualIndex >= range.start && visualIndex <= range.end) {

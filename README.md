@@ -54,7 +54,7 @@ teaches agents to run `gloss open --json`, wait for browser submission, read
 `feedbackPath`, apply comments, validate, and mark comments or the review
 resolved with `gloss resolve`.
 
-The hosted install script remains npm-only:
+The hosted install script installs the npm package:
 
 ```bash
 curl -fsSL https://getgloss.dev/install.sh | sh
