@@ -19,10 +19,12 @@ interface SelectionRef {
 
 export function DiffView({
   record,
-  readOnly = false
+  readOnly = false,
+  wrapLines = false
 }: {
   record: ReviewRecord;
   readOnly?: boolean;
+  wrapLines?: boolean;
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const draft = useReviewStore((state) => state.draft);
@@ -51,7 +53,9 @@ export function DiffView({
                   });
                 }}
               />
-              {collapsed ? null : <DiffFileTable file={file} readOnly={readOnly} />}
+              {collapsed ? null : (
+                <DiffFileTable file={file} readOnly={readOnly} wrapLines={wrapLines} />
+              )}
             </article>
           );
         })
@@ -99,7 +103,15 @@ function EmptyDiff({ record }: { record: ReviewRecord }) {
   );
 }
 
-function DiffFileTable({ file, readOnly }: { file: DiffFile; readOnly: boolean }) {
+function DiffFileTable({
+  file,
+  readOnly,
+  wrapLines
+}: {
+  file: DiffFile;
+  readOnly: boolean;
+  wrapLines: boolean;
+}) {
   const comments = useReviewStore((state) => state.comments);
   const resolution = useReviewStore((state) => state.resolution);
   const draft = useReviewStore((state) => state.draft);
@@ -225,116 +237,128 @@ function DiffFileTable({ file, readOnly }: { file: DiffFile; readOnly: boolean }
   };
 
   return (
-    <fieldset className="diff-table">
-      <legend className="sr-only">{file.path} diff</legend>
-      {file.isBinary ? <div className="binary-note">Binary file changed</div> : null}
-      {file.hunks.map((hunk) => {
-        const hidden = hunk.newStart > previousNewEnd + 1 ? hunk.newStart - previousNewEnd - 1 : 0;
-        previousNewEnd = hunk.newStart + hunk.newLines - 1;
-        return (
-          <div className="hunk" key={`${hunk.oldStart}:${hunk.newStart}`}>
-            {hidden > 0 ? (
-              <button className="hidden-lines" type="button">
-                {hidden} unmodified lines
-              </button>
-            ) : null}
-            <div className="hunk-header">
-              {hunk.header ||
-                `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
-            </div>
-            {hunk.lines.map((line) => {
-              const side = sideForLine(line);
-              const lineNumber = side === 'L' ? line.oldLine : line.newLine;
-              if (lineNumber == null) {
-                return null;
-              }
-              const row: RowRef = {
-                filePath: file.path,
-                side,
-                line: lineNumber,
-                snippet: line.content
-              };
-              const visualIndex = visualIndexByLine.get(rowKey(side, lineNumber));
-              const activeVisualRange =
-                visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
-                  ? dragVisualRange
-                  : visualIndex != null && isInVisualRange(visualIndex, draftVisualRange)
-                    ? draftVisualRange
-                    : null;
-              const selectionClass =
-                visualIndex != null && activeVisualRange
-                  ? selectionClassForLine(
-                      visualIndex,
-                      activeVisualRange.start,
-                      activeVisualRange.end
-                    )
-                  : '';
-              const showDraftComposer =
-                draft &&
-                draft.filePath === file.path &&
-                draft.side === side &&
-                lineNumber === draft.endLine;
-              const rowComments = fileComments.filter(
-                (comment) =>
-                  comment.side === side &&
-                  lineNumber === Math.max(comment.startLine, comment.endLine)
-              );
-              return (
-                <div
-                  key={`${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
-                >
-                  <button
-                    className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
-                    data-file-path={file.path}
-                    data-line={lineNumber}
-                    data-side={side}
-                    type="button"
-                    aria-disabled={readOnly}
-                    onMouseDown={readOnly ? undefined : (event) => startSelection(row, event)}
-                    onMouseEnter={
-                      readOnly
-                        ? undefined
-                        : (event) => extendSelectionFromElement(event.currentTarget)
-                    }
+    <section
+      aria-label={`${file.path} diff`}
+      className={`diff-scroller ${wrapLines ? 'wrap-lines' : ''}`}
+      key={wrapLines ? 'wrapped' : 'unwrapped'}
+    >
+      <div className="diff-table">
+        {file.isBinary ? <div className="binary-note">Binary file changed</div> : null}
+        {file.hunks.map((hunk) => {
+          const hidden =
+            hunk.newStart > previousNewEnd + 1 ? hunk.newStart - previousNewEnd - 1 : 0;
+          previousNewEnd = hunk.newStart + hunk.newLines - 1;
+          return (
+            <div className="hunk" key={`${hunk.oldStart}:${hunk.newStart}`}>
+              {hidden > 0 ? (
+                <button className="hidden-lines" type="button">
+                  {hidden} unmodified lines
+                </button>
+              ) : null}
+              <div className="hunk-header">
+                {hunk.header ||
+                  `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
+              </div>
+              {hunk.lines.map((line) => {
+                const side = sideForLine(line);
+                const lineNumber = side === 'L' ? line.oldLine : line.newLine;
+                if (lineNumber == null) {
+                  return null;
+                }
+                const row: RowRef = {
+                  filePath: file.path,
+                  side,
+                  line: lineNumber,
+                  snippet: line.content
+                };
+                const visualIndex = visualIndexByLine.get(rowKey(side, lineNumber));
+                const activeVisualRange =
+                  visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
+                    ? dragVisualRange
+                    : visualIndex != null && isInVisualRange(visualIndex, draftVisualRange)
+                      ? draftVisualRange
+                      : null;
+                const selectionClass =
+                  visualIndex != null && activeVisualRange
+                    ? selectionClassForLine(
+                        visualIndex,
+                        activeVisualRange.start,
+                        activeVisualRange.end
+                      )
+                    : '';
+                const showDraftComposer =
+                  draft &&
+                  draft.filePath === file.path &&
+                  draft.side === side &&
+                  lineNumber === draft.endLine;
+                const rowComments = fileComments.filter(
+                  (comment) =>
+                    comment.side === side &&
+                    lineNumber === Math.max(comment.startLine, comment.endLine)
+                );
+                return (
+                  <div
+                    key={`${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
                   >
-                    {selectionClass ? <span className="selection-rail" aria-hidden="true" /> : null}
-                    <span className="line-number old">{line.oldLine ?? ''}</span>
-                    <span className="line-number new">{line.newLine ?? ''}</span>
-                    <span className="marker">{markerForLine(line)}</span>
-                    <code>{line.content || ' '}</code>
-                  </button>
-                  {rowComments.map((comment) => {
-                    const resolvedComment = resolvedByCommentId.get(comment.id);
-                    return (
-                      <div
-                        className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
-                        key={comment.id}
-                      >
-                        {resolvedComment ? <CheckCircle2 size={14} /> : <MessageSquare size={14} />}
-                        <span className="inline-comment-content">
-                          {readOnly ? (
-                            <span className="inline-comment-status">
-                              {resolvedComment ? 'Resolved' : 'Open · Needs fix'}
-                            </span>
-                          ) : null}
-                          <span className="inline-comment-body">{comment.body}</span>
-                          {resolvedComment?.summary ? (
-                            <span className="inline-comment-summary">
-                              {resolvedComment.summary}
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {showDraftComposer && !readOnly ? <CommentComposer tone={line.type} /> : null}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
-    </fieldset>
+                    <button
+                      className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
+                      data-file-path={file.path}
+                      data-line={lineNumber}
+                      data-side={side}
+                      type="button"
+                      aria-disabled={readOnly}
+                      onMouseDown={readOnly ? undefined : (event) => startSelection(row, event)}
+                      onMouseEnter={
+                        readOnly
+                          ? undefined
+                          : (event) => extendSelectionFromElement(event.currentTarget)
+                      }
+                    >
+                      {selectionClass ? (
+                        <span className="selection-rail" aria-hidden="true" />
+                      ) : null}
+                      <span className="line-number old">{line.oldLine ?? ''}</span>
+                      <span className="line-number new">{line.newLine ?? ''}</span>
+                      <span className="marker">{markerForLine(line)}</span>
+                      <code>{line.content || ' '}</code>
+                    </button>
+                    {rowComments.map((comment) => {
+                      const resolvedComment = resolvedByCommentId.get(comment.id);
+                      return (
+                        <div
+                          className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
+                          key={comment.id}
+                        >
+                          {resolvedComment ? (
+                            <CheckCircle2 size={14} />
+                          ) : (
+                            <MessageSquare size={14} />
+                          )}
+                          <span className="inline-comment-content">
+                            {readOnly ? (
+                              <span className="inline-comment-status">
+                                {resolvedComment ? 'Resolved' : 'Open · Needs fix'}
+                              </span>
+                            ) : null}
+                            <span className="inline-comment-body">{comment.body}</span>
+                            {resolvedComment?.summary ? (
+                              <span className="inline-comment-summary">
+                                {resolvedComment.summary}
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {showDraftComposer && !readOnly ? <CommentComposer tone={line.type} /> : null}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

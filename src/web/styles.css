@@ -137,7 +137,8 @@ button {
 
 a:focus-visible,
 button:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+.diff-scroller:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -361,6 +362,26 @@ pre {
   white-space: nowrap;
 }
 
+.topbar-actions {
+  display: inline-flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--spacing-8);
+}
+
+.wrap-toggle {
+  flex: 0 0 auto;
+  border-color: var(--border-soft);
+  background: var(--surface-raised);
+}
+
+.wrap-toggle[aria-pressed="true"] {
+  border-color: var(--ide-accent-border);
+  background: var(--ide-accent-muted);
+  color: var(--ide-accent);
+}
+
 .review-state-banner {
   display: flex;
   align-items: center;
@@ -470,10 +491,15 @@ pre {
   color: var(--ide-danger);
 }
 
-.diff-table {
+.diff-scroller {
   width: 100%;
   overflow-x: auto;
   padding: 6px 0;
+}
+
+.diff-table {
+  width: max-content;
+  min-width: 100%;
   margin: 0;
   border: 0;
 }
@@ -518,7 +544,7 @@ pre {
   --range-gutter-background: color-mix(in srgb, var(--ide-accent) 40%, var(--ide-bg-muted));
   --range-rail: var(--ide-accent);
   display: grid;
-  grid-template-columns: 58px 58px 24px minmax(680px, 1fr);
+  grid-template-columns: 58px 58px 24px minmax(680px, max-content);
   width: 100%;
   min-height: 26px;
   align-items: stretch;
@@ -690,6 +716,25 @@ pre {
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 26px;
+}
+
+.diff-scroller.wrap-lines {
+  overflow-x: hidden;
+}
+
+.diff-scroller.wrap-lines .diff-table {
+  width: 100%;
+  min-width: 0;
+}
+
+.diff-scroller.wrap-lines .diff-row {
+  grid-template-columns: 58px 58px 24px minmax(0, 1fr);
+}
+
+.diff-scroller.wrap-lines .diff-row code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .inline-comment {
@@ -2121,6 +2166,10 @@ pre {
     flex-direction: column;
   }
 
+  .topbar-actions {
+    width: 100%;
+  }
+
   .branch-pill {
     max-width: 100%;
   }
@@ -2148,7 +2197,11 @@ pre {
   }
 
   .diff-row {
-    grid-template-columns: 46px 46px 22px minmax(520px, 1fr);
+    grid-template-columns: 46px 46px 22px minmax(520px, max-content);
+  }
+
+  .diff-scroller.wrap-lines .diff-row {
+    grid-template-columns: 46px 46px 22px minmax(0, 1fr);
   }
 
   .inline-comment {

@@ -1,4 +1,4 @@
-import { CheckCircle2, GitBranch, LoaderCircle } from 'lucide-react';
+import { CheckCircle2, GitBranch, LoaderCircle, MoveHorizontal, WrapText } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { reviewResolutionCounts } from '../../shared/comments';
 import { isResolvableReviewStatus } from '../../shared/reviews';
@@ -12,6 +12,7 @@ import { useReviewStore } from '../store';
 export function Review({ reviewId }: { reviewId: string }) {
   const [record, setRecord] = useState<ReviewRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [wrapLines, setWrapLines] = useState(false);
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
 
@@ -119,13 +120,25 @@ export function Review({ reviewId }: { reviewId: string }) {
             </div>
           </div>
         </div>
-        <div className="branch-pill" title={record.meta.branch ?? 'Detached HEAD'}>
-          <GitBranch size={16} />
-          <span>{record.meta.branch ?? 'detached'}</span>
+        <div className="topbar-actions">
+          <button
+            aria-label={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
+            aria-pressed={wrapLines}
+            className="icon-button wrap-toggle"
+            title={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
+            type="button"
+            onClick={() => setWrapLines((current) => !current)}
+          >
+            {wrapLines ? <MoveHorizontal size={16} /> : <WrapText size={16} />}
+          </button>
+          <div className="branch-pill" title={record.meta.branch ?? 'Detached HEAD'}>
+            <GitBranch size={16} />
+            <span>{record.meta.branch ?? 'detached'}</span>
+          </div>
         </div>
       </header>
       {readOnly ? <ReviewStateBanner record={record} /> : null}
-      <DiffView record={record} readOnly={readOnly} />
+      <DiffView record={record} readOnly={readOnly} wrapLines={wrapLines} />
       {readOnly ? null : <SubmitBar reviewId={reviewId} onSubmitted={reloadReview} />}
     </main>
   );
