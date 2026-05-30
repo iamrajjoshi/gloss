@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import openBrowser from 'open';
-import {
-  globalReviewDir,
-  globalReviewFeedbackFile,
-  globalReviewMarkdownFile,
-  packageVersion
-} from '../shared/paths';
+import { packageVersion } from '../shared/paths';
 import type {
   DiffPayload,
   FeedbackBundle,
@@ -42,13 +37,18 @@ type CliJsonOutput =
   | { stopped: boolean; info: ServerInfo | null; stoppedPids?: number[] }
   | {
       reviewId: string;
+      turnId?: string;
+      turnIndex?: number;
       url: string;
       files: number;
       scope: DiffPayload['scope']['mode'];
       artifactDir: string;
+      reused?: boolean;
     }
   | {
       reviewId: string;
+      turnId?: string;
+      turnIndex?: number;
       url: string;
       files: number;
       comments: number;
@@ -56,9 +56,11 @@ type CliJsonOutput =
       markdownPath: string;
       artifactDir: string;
       feedback: FeedbackBundle;
+      reused?: boolean;
     }
   | { running: boolean; server: ServerInfo | null; reviews: ReviewMeta[] }
   | (ResolveResult & { commentId: string | null; summary: string | null })
+  | (ResolveResult & { commentId: string | null; summary: string | null; turn: string | null })
   | { checks: DoctorCheck[] };
 
 function printJson(value: CliJsonOutput): void {
@@ -82,6 +84,7 @@ program
   .command('open')
   .description('Capture local changes and open them for review')
   .option('--base <ref>', 'explicit base git ref')
+  .option('--review <reviewId>', 'append or resume a turn in an existing review')
   .option('--print-url', 'print review URL')
   .option('--no-open', 'do not open a browser')
   .option('--no-watch', 'return immediately after registering the review')
@@ -91,14 +94,28 @@ program
       base?: string;
       printUrl?: boolean;
       open?: boolean;
+      review?: string;
       watch?: boolean;
       timeout?: number;
     }) => {
       const globals = program.opts<GlobalOptions>();
-      const info = await ensureServer();
-      const client = new ServerClient(serverUrl(info));
-      const diff = await captureDiff(options.base);
-      const { meta, url } = await client.createReview(diff);
+      let info = await ensureServer();
+      let client = new ServerClient(serverUrl(info));
+      const inheritedBase =
+        options.review && !options.base
+          ? await baseForExistingReview(client, options.review)
+          : null;
+      const diff = await captureDiff(options.base ?? inheritedBase ?? undefined);
+      const created = options.review
+        ? await client.appendReviewTurn(options.review, diff)
+        : await client.createReview(diff);
+      const meta = created.meta;
+      const turn = created.turn ?? meta.turns?.find((summary) => summary.id === meta.activeTurnId);
+      if (!turn) {
+        throw new Error(`Review ${meta.id} has no active turn`);
+      }
+      const reused = 'reused' in created ? created.reused === true : false;
+      let url = created.url;
       const shouldWatch = options.watch !== false;
 
       if (options.printUrl) {
@@ -111,16 +128,37 @@ program
       if (!shouldWatch) {
         const result = {
           reviewId: meta.id,
+          turnId: turn.id,
+          turnIndex: turn.index,
           url,
           files: diff.files.length,
           scope: diff.scope.mode,
-          artifactDir: meta.artifactDir
+          artifactDir: turn.artifactDir,
+          reused
         };
         globals.json ? printJson(result) : printPlain(`Review ${meta.id}: ${url}`);
         return;
       }
 
-      const event = await client.watchReview(meta.id, options.timeout);
+      const watched = await watchReviewWithReconnect(
+        meta.id,
+        info,
+        options.timeout,
+        async (nextInfo) => {
+          info = nextInfo;
+          client = new ServerClient(serverUrl(info));
+          url = `${serverUrl(info)}/review/${meta.id}`;
+          if (options.printUrl) {
+            printPlain(url);
+          }
+          if (options.open !== false) {
+            await openBrowser(url);
+          }
+        }
+      );
+      info = watched.info;
+      client = new ServerClient(serverUrl(info));
+      const event = watched.event;
       if (event.type === 'review.cancelled') {
         process.exitCode = 2;
         globals.json ? printJson(event) : printPlain(`Review ${meta.id} cancelled`);
@@ -130,16 +168,28 @@ program
         throw new Error(`Unexpected review event ${event.type}`);
       }
 
-      const feedback = await client.getFeedback(meta.id);
+      const [feedback, submittedRecord] = await Promise.all([
+        client.getFeedback(meta.id),
+        client.getReview(meta.id)
+      ]);
+      const submittedTurn =
+        submittedRecord.meta.turns?.find((summary) => summary.id === (event.turnId ?? turn.id)) ??
+        turn;
+      if (!submittedTurn.feedbackPath || !submittedTurn.markdownPath) {
+        throw new Error(`Review ${meta.id} turn ${submittedTurn.index} is missing feedback paths`);
+      }
       const result = {
         reviewId: meta.id,
+        turnId: submittedTurn.id,
+        turnIndex: submittedTurn.index,
         url,
         files: event.counts.files,
         comments: event.counts.comments,
-        feedbackPath: globalReviewFeedbackFile(meta.id),
-        markdownPath: globalReviewMarkdownFile(meta.id),
-        artifactDir: globalReviewDir(meta.id),
-        feedback
+        feedbackPath: submittedTurn.feedbackPath,
+        markdownPath: submittedTurn.markdownPath,
+        artifactDir: submittedTurn.artifactDir,
+        feedback,
+        reused
       };
       globals.json
         ? printJson(result)
@@ -155,8 +205,12 @@ program
   .action(async (reviewId: string, options: { timeout?: number }) => {
     const globals = program.opts<GlobalOptions>();
     const info = await ensureServer();
-    const client = new ServerClient(serverUrl(info));
-    const event = await client.watchReview(reviewId, options.timeout);
+    const { event } = await watchReviewWithReconnect(
+      reviewId,
+      info,
+      options.timeout,
+      async () => undefined
+    );
     globals.json ? printJson(event) : printPlain(`${event.type} ${event.reviewId}`);
   });
 
@@ -214,27 +268,31 @@ program
   .description('Mark a submitted review or one feedback comment as resolved')
   .option('--comment <commentId>', 'resolve one submitted feedback comment')
   .option('--summary <text>', 'brief summary of the fixes applied')
-  .action(async (reviewId: string, options: { comment?: string; summary?: string }) => {
-    const globals = program.opts<GlobalOptions>();
-    const info = await ensureServer();
-    const client = new ServerClient(serverUrl(info));
-    const result = options.comment
-      ? await client.resolveComment(reviewId, options.comment, options.summary)
-      : await client.markResolved(reviewId, options.summary);
-    if (globals.json) {
-      printJson({
-        commentId: options.comment ?? null,
-        summary: options.summary ?? null,
-        ...result
-      });
-      return;
+  .option('--turn <idOrIndex>', 'resolve a specific turn for whole-review resolution')
+  .action(
+    async (reviewId: string, options: { comment?: string; summary?: string; turn?: string }) => {
+      const globals = program.opts<GlobalOptions>();
+      const info = await ensureServer();
+      const client = new ServerClient(serverUrl(info));
+      const result = options.comment
+        ? await client.resolveComment(reviewId, options.comment, options.summary)
+        : await client.markResolved(reviewId, options.summary, options.turn);
+      if (globals.json) {
+        printJson({
+          commentId: options.comment ?? null,
+          summary: options.summary ?? null,
+          turn: options.turn ?? null,
+          ...result
+        });
+        return;
+      }
+      printPlain(
+        options.comment
+          ? `Comment ${options.comment} resolved in review ${reviewId}`
+          : `Review ${reviewId} resolved`
+      );
     }
-    printPlain(
-      options.comment
-        ? `Comment ${options.comment} resolved in review ${reviewId}`
-        : `Review ${reviewId} resolved`
-    );
-  });
+  );
 
 program
   .command('doctor')
@@ -296,6 +354,66 @@ program
       }
     }
   });
+
+async function watchReviewWithReconnect(
+  reviewId: string,
+  initialInfo: ServerInfo,
+  timeoutSeconds: number | undefined,
+  onServerChanged: (info: ServerInfo) => Promise<void>
+): Promise<{ event: ReviewEvent; info: ServerInfo }> {
+  const startedAt = Date.now();
+  let info = initialInfo;
+
+  while (true) {
+    const remainingSeconds =
+      timeoutSeconds && timeoutSeconds > 0
+        ? timeoutSeconds - (Date.now() - startedAt) / 1000
+        : undefined;
+    if (remainingSeconds !== undefined && remainingSeconds <= 0) {
+      throw new Error(`watch timed out after ${timeoutSeconds} seconds`);
+    }
+
+    try {
+      const event = await new ServerClient(serverUrl(info)).watchReview(reviewId, remainingSeconds);
+      return { event, info };
+    } catch (error) {
+      if (isWatchTimeout(error)) {
+        throw error;
+      }
+      if (!isReconnectableWatchError(error)) {
+        throw error;
+      }
+      await sleep(500);
+      const nextInfo = await ensureServer();
+      if (nextInfo.port !== info.port) {
+        await onServerChanged(nextInfo);
+      }
+      info = nextInfo;
+    }
+  }
+}
+
+async function baseForExistingReview(
+  client: ServerClient,
+  reviewId: string
+): Promise<string | null> {
+  const record = await client.getReview(reviewId);
+  return record.diff.scope.mode === 'explicit'
+    ? (record.diff.scope.requestedBase ?? record.diff.base.ref)
+    : null;
+}
+
+function isWatchTimeout(error: unknown): error is Error {
+  return error instanceof Error && /^watch timed out after/.test(error.message);
+}
+
+function isReconnectableWatchError(error: unknown): error is Error {
+  return error instanceof Error && !/^watch failed: [45]\d\d /.test(error.message);
+}
+
+async function sleep(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

@@ -39,6 +39,34 @@ export function globalReviewDir(reviewId: string): string {
   return path.join(globalReviewsDir(), reviewId);
 }
 
+export function globalReviewTurnsDir(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'turns');
+}
+
+export function globalReviewTurnDir(reviewId: string, turnId: string): string {
+  return path.join(globalReviewTurnsDir(reviewId), turnId);
+}
+
+export function globalReviewTurnMetaFile(reviewId: string, turnId: string): string {
+  return path.join(globalReviewTurnDir(reviewId, turnId), 'turn.json');
+}
+
+export function globalReviewTurnDiffFile(reviewId: string, turnId: string): string {
+  return path.join(globalReviewTurnDir(reviewId, turnId), 'diff.json');
+}
+
+export function globalReviewTurnFeedbackFile(reviewId: string, turnId: string): string {
+  return path.join(globalReviewTurnDir(reviewId, turnId), 'feedback.json');
+}
+
+export function globalReviewTurnMarkdownFile(reviewId: string, turnId: string): string {
+  return path.join(globalReviewTurnDir(reviewId, turnId), 'feedback.md');
+}
+
+export function globalReviewTurnResolvedFile(reviewId: string, turnId: string): string {
+  return path.join(globalReviewTurnDir(reviewId, turnId), 'resolved.json');
+}
+
 export function globalReviewMetaFile(reviewId: string): string {
   return path.join(globalReviewDir(reviewId), 'meta.json');
 }

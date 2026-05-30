@@ -13,12 +13,15 @@ import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
   CommitRangeDiffResponse,
   CreateReviewResponse,
+  CreateReviewTurnResponse,
   HealthResponse,
   ListReviewsResponse,
   OpenFileResponse,
   OpenResult,
   ResolutionRequest,
   ReviewEvent,
+  ReviewMeta,
+  ReviewTurnSummary,
   SubmitReviewRequest
 } from '../shared/types';
 import {
@@ -79,10 +82,36 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     const record = await reviewStore.create(diff);
     const response: CreateReviewResponse = {
       meta: record.meta,
+      turn: activeTurnSummary(record.meta),
       url: `${origin}/review/${record.meta.id}`
     };
     options.onReviewActivity?.();
     return c.json(response, 201);
+  });
+
+  app.post('/api/reviews/:id/turns', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isDiffPayload, 'review diff');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    try {
+      const { record, turn, reused } = await reviewStore.appendTurn(id, parsed.body);
+      const response: CreateReviewTurnResponse = {
+        meta: record.meta,
+        turn: turnSummary(record.meta, turn.id),
+        url: `${origin}/review/${id}`,
+        reused
+      };
+      options.onReviewActivity?.();
+      return c.json(response);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, 409);
+    }
   });
 
   app.get('/api/reviews/:id', async (c) => {
@@ -91,6 +120,14 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       return c.json({ error: 'review not found' }, 404);
     }
     return c.json(record);
+  });
+
+  app.get('/api/reviews/:id/turns/:turnId', async (c) => {
+    const turn = await reviewStore.getTurn(c.req.param('id'), c.req.param('turnId'));
+    if (!turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+    return c.json(turn);
   });
 
   app.get('/api/reviews/:id/feedback', async (c) => {
@@ -155,6 +192,8 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
         send({
           type: 'review.submitted',
           reviewId: id,
+          turnId: record.meta.activeTurnId,
+          turnIndex: record.meta.turns?.find((turn) => turn.id === record.meta.activeTurnId)?.index,
           counts: {
             files: countCommentFiles(record.feedback.comments),
             comments: record.feedback.comments.length
@@ -171,21 +210,26 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (existing.meta.status !== 'pending') {
-      return c.json({ error: `review is ${existing.meta.status} and cannot be submitted` }, 409);
-    }
     const parsed = await readJsonBody(c, isSubmitReviewRequest, 'submit review request');
     if (!parsed.ok) {
       return parsed.response;
     }
     const body: SubmitReviewRequest = parsed.body;
-    const { record, feedbackPath, markdownPath } = await reviewStore.submit(id, body.comments);
+    let submitted: Awaited<ReturnType<typeof reviewStore.submit>>;
+    try {
+      submitted = await reviewStore.submit(id, body.comments, body.reviewScope);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, 409);
+    }
+    const { feedbackPath, markdownPath, turn } = submitted;
     const response: OpenResult = {
       reviewId: id,
+      turnId: turn.id,
+      turnIndex: turn.index,
       url: `${origin}/review/${id}`,
-      files: record.diff.files.length,
+      files: turn.diff.files.length,
       comments: body.comments.length,
-      artifactDir: record.meta.artifactDir,
+      artifactDir: turn.artifactDir,
       feedbackPath,
       markdownPath
     };
@@ -204,7 +248,13 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       return parsed.response;
     }
 
-    const commitDiffs = existing.diff.commitDiffs ?? [];
+    const requestedTurnId = parsed.body.turnId;
+    const turn = requestedTurnId ? await reviewStore.getTurn(id, requestedTurnId) : null;
+    if (requestedTurnId && !turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+    const diffPayload = turn?.diff ?? existing.diff;
+    const commitDiffs = diffPayload.commitDiffs ?? [];
     if (commitDiffs.length === 0) {
       return c.json({ error: 'commit ranges are only available for branch reviews' }, 409);
     }
@@ -222,7 +272,7 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     const diff =
       fromSha === toSha
         ? commitDiffs[fromIndex]
-        : await captureCommitRangeDiff(fromSha, toSha, existing.diff.cwd);
+        : await captureCommitRangeDiff(fromSha, toSha, diffPayload.cwd);
     const response: CommitRangeDiffResponse = {
       fromSha,
       toSha,
@@ -244,7 +294,7 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       return parsed.response;
     }
 
-    const { filePath } = parsed.body;
+    const { filePath, turnId } = parsed.body;
     if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath)) {
       return c.json({ error: 'filePath must be a repo-relative path' }, 400);
     }
@@ -255,9 +305,14 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       return c.json({ error: 'filePath must stay within the review cwd' }, 400);
     }
 
+    const turn = turnId ? await reviewStore.getTurn(id, turnId) : null;
+    if (turnId && !turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+    const diffPayload = turn?.diff ?? existing.diff;
     const reviewFiles = [
-      ...existing.diff.files,
-      ...(existing.diff.commitDiffs ?? []).flatMap((commitDiff) => commitDiff.files)
+      ...diffPayload.files,
+      ...(diffPayload.commitDiffs ?? []).flatMap((commitDiff) => commitDiff.files)
     ].filter((file) => file.path === filePath);
     if (reviewFiles.length === 0) {
       return c.json({ error: 'file is not part of this review' }, 404);
@@ -305,20 +360,18 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (!isResolvableReviewStatus(existing.meta.status)) {
-      return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
-    }
-    if (!existing.feedback) {
-      return c.json({ error: 'submitted feedback not found' }, 409);
-    }
     const parsed = await readJsonBody(c, isResolutionRequest, 'resolution request');
     if (!parsed.ok) {
       return parsed.response;
     }
     const body: ResolutionRequest = parsed.body;
-    const result = await reviewStore.markResolved(id, body.summary);
-    options.onReviewActivity?.();
-    return c.json(result);
+    try {
+      const result = await reviewStore.markResolved(id, body.summary, body.turn);
+      options.onReviewActivity?.();
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, statusForStoreError(error));
+    }
   });
 
   app.post('/api/reviews/:id/comments/:commentId/resolved', async (c) => {
@@ -328,20 +381,18 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (!isResolvableReviewStatus(existing.meta.status)) {
-      return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
-    }
-    if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
-      return c.json({ error: 'comment not found' }, 404);
-    }
     const parsed = await readJsonBody(c, isResolutionRequest, 'resolution request');
     if (!parsed.ok) {
       return parsed.response;
     }
     const body: ResolutionRequest = parsed.body;
-    const result = await reviewStore.resolveComment(id, commentId, body.summary);
-    options.onReviewActivity?.();
-    return c.json(result);
+    try {
+      const result = await reviewStore.resolveComment(id, commentId, body.summary);
+      options.onReviewActivity?.();
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, statusForStoreError(error));
+    }
   });
 
   app.delete('/api/reviews/:id/comments/:commentId/resolved', async (c) => {
@@ -351,15 +402,13 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    if (!isResolvableReviewStatus(existing.meta.status)) {
-      return c.json({ error: `review is ${existing.meta.status} and cannot be resolved` }, 409);
+    try {
+      const result = await reviewStore.reopenComment(id, commentId);
+      options.onReviewActivity?.();
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, statusForStoreError(error));
     }
-    if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
-      return c.json({ error: 'comment not found' }, 404);
-    }
-    const result = await reviewStore.reopenComment(id, commentId);
-    options.onReviewActivity?.();
-    return c.json(result);
   });
 
   app.get('/logo.svg', serveRootFile('logo.svg', mimeTypes['.svg']));
@@ -454,4 +503,23 @@ async function readJsonBody<T>(
 function isPathWithin(parentPath: string, childPath: string): boolean {
   const relative = path.relative(parentPath, childPath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function activeTurnSummary(meta: ReviewMeta): ReviewTurnSummary {
+  if (!meta.activeTurnId) {
+    throw new Error(`Review ${meta.id} has no active turn`);
+  }
+  return turnSummary(meta, meta.activeTurnId);
+}
+
+function turnSummary(meta: ReviewMeta, turnId: string): ReviewTurnSummary {
+  const summary = meta.turns?.find((turn) => turn.id === turnId);
+  if (!summary) {
+    throw new Error(`Review ${meta.id} is missing turn ${turnId}`);
+  }
+  return summary;
+}
+
+function statusForStoreError(error: unknown): 404 | 409 {
+  return /not found/i.test(formatError(error)) ? 404 : 409;
 }

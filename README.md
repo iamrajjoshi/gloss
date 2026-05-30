@@ -68,8 +68,9 @@ npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
 `-g` installs to `~/.claude/skills/`, `-a claude-code` targets Claude Code, and
 `--skill gloss` installs only the Gloss skill folder from the repo. The skill
 teaches agents to run `gloss open --json`, wait for browser submission, read
-`feedbackPath`, apply comments, validate, and mark comments or the review
-resolved with `gloss resolve`.
+`feedbackPath`, apply comments, validate, continue the same review with
+`gloss open --review <reviewId> --json`, and mark comments or turns resolved
+with `gloss resolve`.
 
 The hosted install script installs the npm package:
 
@@ -80,9 +81,9 @@ curl -fsSL https://getgloss.dev/install.sh | sh
 ## Commands
 
 ```text
-gloss open [--base <ref>] [--print-url] [--no-open] [--json] [--no-watch] [--timeout <s>]
+gloss open [--base <ref>] [--review <reviewId>] [--print-url] [--no-open] [--json] [--no-watch] [--timeout <s>]
 gloss watch <reviewId>
-gloss resolve <reviewId> [--comment <commentId>] [--summary <text>] [--json]
+gloss resolve <reviewId> [--comment <commentId>] [--turn <id-or-index>] [--summary <text>] [--json]
 gloss start [--port <port>]
 gloss status
 gloss stop [--all]
@@ -102,6 +103,8 @@ compares only against the requested ref and does not switch to a branch diff.
 
 `gloss open --json` waits until the browser review is submitted. Use
 `--no-watch` when a caller only needs to open the review and return immediately.
+Use `gloss open --review <reviewId> --json` after applying feedback to capture
+the next diff as another turn in the same browser review.
 The background server exits automatically after a short idle window with no
 pending reviews. `gloss doctor` reports unmanaged daemon processes, and
 `gloss stop --all` cleans them up.
@@ -113,6 +116,11 @@ comment. Use `Command+Enter` to save the active draft comment. Use
 `Command+Shift+Enter` to submit the review; this matches the Submit button and
 includes already-saved comments only.
 
+When branch reviews include per-commit diffs, the commit picker changes only the
+current preview. Gloss persists that selected scope when the review is submitted,
+so `feedback.json` records whether the human reviewed all commits, one commit, or
+a contiguous commit range.
+
 ## Feedback Files
 
 Submitted reviews are written to:
@@ -120,21 +128,26 @@ Submitted reviews are written to:
 ```text
 ~/.gloss/reviews/<reviewId>/
   meta.json
-  diff.json
-  feedback.json
-  feedback.md
-  resolved.json
+  turns/
+    <turnId>/
+      turn.json
+      diff.json
+      feedback.json
+      feedback.md
+      resolved.json
 ```
 
-`feedback.json` is the machine-readable payload. `feedback.md` is a readable
-summary ordered by file and line. `resolved.json` is mutable resolution
-progress for individual comments and the full review. After applying feedback,
-use `gloss resolve <reviewId> --comment <commentId> --summary "..."` for a
-single comment or `gloss resolve <reviewId> --summary "..."` for the whole
-review. Set `GLOSS_STATE_DIR` to use an isolated state root for tests or
+`feedback.json` is the machine-readable payload and includes `reviewScope` for
+submitted commit-preview scope. `feedback.md` is a readable summary ordered by
+file and line. `resolved.json` is mutable resolution progress for individual
+comments and the turn. After applying feedback, use
+`gloss resolve <reviewId> --comment <commentId> --summary "..."` for a single
+comment or `gloss resolve <reviewId> --turn <id-or-index> --summary "..."` for a
+specific turn. Without `--turn`, whole-review resolution targets the latest
+turn. Set `GLOSS_STATE_DIR` to use an isolated state root for tests or
 development.
-For a follow-up pass after fixes or new commits, start a fresh session with
-`gloss open --json`.
+For a follow-up pass after fixes or new commits, continue the same review with
+`gloss open --review <reviewId> --json`.
 
 ## Development
 

@@ -6,13 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue } from '../shared/json';
 import {
   globalReviewDir,
-  globalReviewFeedbackFile,
-  globalReviewResolvedFile
+  globalReviewTurnFeedbackFile,
+  globalReviewTurnResolvedFile
 } from '../shared/paths';
 import type { ReviewEvent } from '../shared/types';
 import {
   isCommitRangeDiffResponse,
   isCreateReviewResponse,
+  isCreateReviewTurnResponse,
   isListReviewsResponse,
   isOpenFileResponse,
   isOpenResult,
@@ -66,6 +67,7 @@ describe('Gloss review API global persistence', () => {
     );
 
     expect(createdResponse.status).toBe(201);
+    expect(created.turn).toBeTruthy();
     expect(created.url).toBe(`http://localhost:4321/review/${created.meta.id}`);
     expect(created.meta.artifactDir).toBe(globalReviewDir(created.meta.id));
     expect(existsSync(path.join(repoRoot, '.gloss'))).toBe(false);
@@ -77,8 +79,11 @@ describe('Gloss review API global persistence', () => {
     });
     const submitted = await responseJson(submittedResponse, isOpenResult, 'submit review response');
 
-    expect(submitted.artifactDir).toBe(globalReviewDir(created.meta.id));
-    expect(submitted.feedbackPath).toBe(globalReviewFeedbackFile(created.meta.id));
+    expect(submitted.turnId).toBe(created.turn?.id);
+    expect(submitted.artifactDir).toBe(created.turn?.artifactDir);
+    expect(submitted.feedbackPath).toBe(
+      globalReviewTurnFeedbackFile(created.meta.id, created.turn?.id ?? '')
+    );
 
     vi.resetModules();
     const { createApp: createReloadedApp } = await import('./index');
@@ -96,7 +101,7 @@ describe('Gloss review API global persistence', () => {
     ]);
   });
 
-  it('rejects submitting a submitted or resolved review', async () => {
+  it('treats identical resubmits as idempotent and rejects changed resubmits', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const createdResponse = await app.request('/api/reviews', {
@@ -120,9 +125,15 @@ describe('Gloss review API global persistence', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ comments: [makeComment()] })
     });
+    const changedSubmitResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ body: 'Different feedback.' })] })
+    });
 
     expect(firstSubmitResponse.status).toBe(200);
-    expect(submittedAgainResponse.status).toBe(409);
+    expect(submittedAgainResponse.status).toBe(200);
+    expect(changedSubmitResponse.status).toBe(409);
 
     await app.request(`/api/reviews/${created.meta.id}/resolved`, {
       method: 'POST',
@@ -135,7 +146,107 @@ describe('Gloss review API global persistence', () => {
       body: JSON.stringify({ comments: [makeComment()] })
     });
 
-    expect(resolvedSubmitResponse.status).toBe(409);
+    expect(resolvedSubmitResponse.status).toBe(200);
+  });
+
+  it('persists submitted feedback scope from the UI commit selection', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const diff = makeApiDiffWithCommits();
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const reviewScope = {
+      mode: 'single' as const,
+      sha: diff.commitDiffs?.[1]?.commit.sha ?? ''
+    };
+
+    const submittedResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        reviewScope,
+        comments: [makeComment({ filePath: 'second.ts', originalSnippet: 'second' })]
+      })
+    });
+    const changedScopeResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        reviewScope: { mode: 'all' },
+        comments: [makeComment({ filePath: 'second.ts', originalSnippet: 'second' })]
+      })
+    });
+    const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
+    const hydrated = await responseJson(hydratedResponse, isReviewRecord, 'review response');
+
+    expect(submittedResponse.status).toBe(200);
+    expect(changedScopeResponse.status).toBe(409);
+    expect(hydrated.feedback?.reviewScope).toEqual(reviewScope);
+    expect(hydrated.turns[0]?.feedback?.reviewScope).toEqual(reviewScope);
+  });
+
+  it('appends and reuses turns through the API', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1' })] })
+    });
+
+    const secondDiff = makeApiDiff({
+      code: 'export const followup = true;',
+      filePath: 'followup.ts'
+    });
+    const appendedResponse = await app.request(`/api/reviews/${created.meta.id}/turns`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(secondDiff)
+    });
+    const appended = await responseJson(
+      appendedResponse,
+      isCreateReviewTurnResponse,
+      'create turn response'
+    );
+    const retriedResponse = await app.request(`/api/reviews/${created.meta.id}/turns`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(secondDiff)
+    });
+    const retried = await responseJson(
+      retriedResponse,
+      isCreateReviewTurnResponse,
+      'retry turn response'
+    );
+    const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
+    const hydrated = await responseJson(hydratedResponse, isReviewRecord, 'review response');
+
+    expect(appendedResponse.status).toBe(200);
+    expect(appended.reused).toBe(false);
+    expect(appended.turn.index).toBe(2);
+    expect(retried.reused).toBe(true);
+    expect(retried.turn.id).toBe(appended.turn.id);
+    expect(hydrated.turns).toHaveLength(2);
+    expect(hydrated.meta.activeTurnId).toBe(appended.turn.id);
+    expect(hydrated.diff.files[0]?.path).toBe('followup.ts');
   });
 
   it('accepts and reloads review payloads with per-commit diffs', async () => {
@@ -478,7 +589,7 @@ describe('Gloss review API global persistence', () => {
       status: 'submitted',
       resolutionStatus: 'partial',
       comments: { total: 2, resolved: 1, open: 1 },
-      path: globalReviewResolvedFile(created.meta.id)
+      path: globalReviewTurnResolvedFile(created.meta.id, created.turn?.id ?? '')
     });
 
     const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
@@ -661,12 +772,12 @@ describe('Gloss review API global persistence', () => {
   });
 });
 
-function makeApiDiff() {
+function makeApiDiff(options: { code?: string; filePath?: string } = {}) {
   return makeDiff({
     branch: 'raj--gloss--api',
-    code: 'export const api = true;',
+    code: options.code ?? 'export const api = true;',
     cwd: repoRoot,
-    filePath: 'api.ts'
+    filePath: options.filePath ?? 'api.ts'
   });
 }
 

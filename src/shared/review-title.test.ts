@@ -4,6 +4,15 @@ import { reviewDisplayTitle } from './review-title';
 import type { DiffPayload, ReviewRecord } from './types';
 
 function makeRecord(diff: DiffPayload): ReviewRecord {
+  const turn = {
+    id: 'turn-1',
+    index: 1,
+    status: 'pending' as const,
+    createdAt: diff.capturedAt,
+    artifactDir: '/tmp/gloss/reviews/review-1/turns/turn-1',
+    diffPath: '/tmp/gloss/reviews/review-1/turns/turn-1/diff.json',
+    diff
+  };
   return {
     meta: {
       id: 'review-1',
@@ -12,8 +21,10 @@ function makeRecord(diff: DiffPayload): ReviewRecord {
       branch: diff.branch,
       status: 'pending',
       createdAt: diff.capturedAt,
-      artifactDir: '/tmp/gloss/reviews/review-1'
+      artifactDir: '/tmp/gloss/reviews/review-1',
+      activeTurnId: turn.id
     },
+    turns: [turn],
     diff
   };
 }

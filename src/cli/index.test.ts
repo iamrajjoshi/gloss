@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue } from '../shared/json';
 import {
   globalReviewMetaFile,
-  globalReviewResolvedFile,
+  globalReviewTurnResolvedFile,
   globalStateDir,
   packageVersion
 } from '../shared/paths';
@@ -19,6 +19,8 @@ import {
   isOpenResult,
   isResolutionBundle,
   isResolveResult,
+  isReviewEvent,
+  isReviewRecord,
   isStoredReviewMeta,
   type JsonGuard,
   parseJson,
@@ -30,6 +32,7 @@ const originalStateDir = process.env.GLOSS_STATE_DIR;
 let tempDirs: string[] = [];
 let repoRoot = '';
 let server: ReturnType<typeof serve> | null = null;
+type TestServer = ReturnType<typeof serve>;
 
 beforeEach(async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'gloss-cli-state-'));
@@ -40,8 +43,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  server?.close();
-  server = null;
+  await closeServerFixture();
   if (originalStateDir === undefined) {
     delete process.env.GLOSS_STATE_DIR;
   } else {
@@ -70,6 +72,27 @@ async function startServerFixture(): Promise<{
     stateDir: globalStateDir()
   });
   return { app };
+}
+
+async function closeServerFixture(): Promise<void> {
+  if (!server) {
+    return;
+  }
+  const current = server;
+  server = null;
+  await closeServerInstance(current);
+}
+
+async function closeServerInstance(current: TestServer): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    current.close((error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
 async function initializeGitRepoWithChange(): Promise<void> {
@@ -161,7 +184,7 @@ describe('gloss resolve', () => {
       'review metadata'
     );
     const resolved = parseJson(
-      await readFile(globalReviewResolvedFile(created.meta.id), 'utf8'),
+      await readFile(result.path, 'utf8'),
       isResolutionBundle,
       'review resolution'
     );
@@ -174,7 +197,7 @@ describe('gloss resolve', () => {
       status: 'resolved',
       resolutionStatus: 'resolved',
       comments: { total: 1, resolved: 1, open: 0 },
-      path: globalReviewResolvedFile(created.meta.id)
+      path: globalReviewTurnResolvedFile(created.meta.id, created.turn?.id ?? '')
     });
     expect(meta.status).toBe('resolved');
     expect(resolved).toMatchObject({
@@ -246,7 +269,7 @@ describe('gloss resolve', () => {
       'review metadata'
     );
     const resolved = parseJson(
-      await readFile(globalReviewResolvedFile(created.meta.id), 'utf8'),
+      await readFile(result.path, 'utf8'),
       isResolutionBundle,
       'review resolution'
     );
@@ -259,7 +282,7 @@ describe('gloss resolve', () => {
       status: 'submitted',
       resolutionStatus: 'partial',
       comments: { total: 2, resolved: 1, open: 1 },
-      path: globalReviewResolvedFile(created.meta.id)
+      path: globalReviewTurnResolvedFile(created.meta.id, created.turn?.id ?? '')
     });
     expect(meta.status).toBe('submitted');
     expect(resolved).toMatchObject({
@@ -300,4 +323,158 @@ describe('gloss open', () => {
     expect(list.reviews).toHaveLength(1);
     expect(list.reviews[0]?.status).toBe('pending');
   });
+
+  it('supports repeated agent-code human-review turns with --review', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const first = parseJson(
+      (await runCliInRepo(['open', '--base', 'HEAD', '--no-open', '--no-watch', '--json'])).stdout,
+      isOpenResult,
+      'first open output'
+    );
+    const firstSubmitResponse = await app.request(`/api/reviews/${first.reviewId}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1', filePath: 'api.ts' })] })
+    });
+    const firstSubmit = await responseJson(
+      firstSubmitResponse,
+      isOpenResult,
+      'first submit response'
+    );
+    await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = "followup";\n');
+
+    const second = parseJson(
+      (
+        await runCliInRepo([
+          'open',
+          '--review',
+          first.reviewId,
+          '--no-open',
+          '--no-watch',
+          '--json'
+        ])
+      ).stdout,
+      isOpenResult,
+      'second open output'
+    );
+    const openedResponse = await app.request(`/api/reviews/${first.reviewId}`);
+    const opened = await responseJson(openedResponse, isReviewRecord, 'opened review response');
+    const secondSubmitResponse = await app.request(`/api/reviews/${first.reviewId}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        comments: [
+          makeComment({
+            id: 'comment-2',
+            filePath: 'api.ts',
+            body: 'Follow-up feedback.',
+            originalSnippet: 'export const api = "followup";'
+          })
+        ]
+      })
+    });
+    const secondSubmit = await responseJson(
+      secondSubmitResponse,
+      isOpenResult,
+      'second submit response'
+    );
+    const submittedResponse = await app.request(`/api/reviews/${first.reviewId}`);
+    const submitted = await responseJson(
+      submittedResponse,
+      isReviewRecord,
+      'submitted review response'
+    );
+
+    expect(second.reviewId).toBe(first.reviewId);
+    expect(second.turnIndex).toBe(2);
+    expect(second.turnId).not.toBe(first.turnId);
+    expect(opened.turns).toHaveLength(2);
+    expect(opened.meta.activeTurnId).toBe(second.turnId);
+    expect(opened.diff.rawDiff).toContain('followup');
+    expect(opened.diff.scope.mode).toBe('explicit');
+    expect(opened.diff.scope.requestedBase).toBe('HEAD');
+    expect(firstSubmit.turnId).toBe(first.turnId);
+    expect(secondSubmit.turnId).toBe(second.turnId);
+    expect(submitted.meta.status).toBe('submitted');
+    expect(submitted.turns.map((turn) => turn.feedback?.comments[0]?.id)).toEqual([
+      'comment-1',
+      'comment-2'
+    ]);
+    expect(submitted.meta.turns?.map((turn) => turn.comments.total)).toEqual([1, 1]);
+  });
+});
+
+describe('gloss watch', () => {
+  it('reconnects when the daemon restarts on another port', async () => {
+    let markStreamOpened: (() => void) | null = null;
+    const firstStream: { close: (() => void) | null } = { close: null };
+    const streamOpened = new Promise<void>((resolve) => {
+      markStreamOpened = resolve;
+    });
+    const firstPort = await getPort();
+    const { createApp } = await import('../server/index');
+    const app = createApp(`http://localhost:${firstPort}`, {
+      registerEventStream: (close) => {
+        firstStream.close = close;
+        queueMicrotask(() => markStreamOpened?.());
+        return () => {
+          if (firstStream.close === close) {
+            firstStream.close = null;
+          }
+        };
+      }
+    });
+    server = serve({ fetch: app.fetch, port: firstPort });
+    await writeServerInfo({
+      pid: process.pid,
+      port: firstPort,
+      version: packageVersion,
+      startedAt: '2026-05-23T12:00:00.000Z',
+      stateDir: globalStateDir()
+    });
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeDiff(repoRoot))
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const watch = runCliInRepo(['watch', created.meta.id, '--timeout', '5', '--json']);
+    await streamOpened;
+    const firstServer = server;
+    if (!firstServer) {
+      throw new Error('expected first server fixture');
+    }
+    const secondPort = await getPort();
+    server = serve({ fetch: app.fetch, port: secondPort });
+    await writeServerInfo({
+      pid: process.pid,
+      port: secondPort,
+      version: packageVersion,
+      startedAt: '2026-05-23T12:00:01.000Z',
+      stateDir: globalStateDir()
+    });
+    firstStream.close?.();
+    await closeServerInstance(firstServer);
+    const submittedResponse = await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+    await responseJson(submittedResponse, isOpenResult, 'submit review response');
+
+    const event = parseJson((await watch).stdout, isReviewEvent, 'watch output');
+
+    expect(event).toMatchObject({
+      type: 'review.submitted',
+      reviewId: created.meta.id,
+      turnId: created.turn?.id
+    });
+  }, 10_000);
 });

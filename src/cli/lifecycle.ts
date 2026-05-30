@@ -56,9 +56,21 @@ export async function startServer(options: { port?: number } = {}): Promise<Serv
     await retireServer(existing);
   }
 
+  const preferredPort = options.port ?? existing?.port ?? (await getPort());
+  try {
+    return await launchServer(preferredPort);
+  } catch (error) {
+    if (options.port || !existing?.port) {
+      throw error;
+    }
+    await removeServerInfoForPid(existing.pid);
+    return launchServer(await getPort());
+  }
+}
+
+async function launchServer(port: number): Promise<ServerInfo> {
   await ensureDir(globalStateDir());
   await ensureDir(globalLogDir());
-  const port = options.port ?? (await getPort());
   const daemonPath = fileURLToPath(new URL('../server/daemon.js', import.meta.url));
   if (!existsSync(daemonPath)) {
     throw new Error(`Cannot find server daemon at ${daemonPath}. Run pnpm build first.`);

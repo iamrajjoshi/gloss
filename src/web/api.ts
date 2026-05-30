@@ -7,6 +7,7 @@ import type {
   OpenFileResponse,
   OpenResult,
   ReviewRecord,
+  ReviewScope,
   SubmitReviewRequest
 } from '../shared/types';
 import {
@@ -30,8 +31,12 @@ export async function fetchReview(reviewId: string): Promise<ReviewRecord> {
   return json(await fetch(`/api/reviews/${reviewId}`), isReviewRecord, 'review response');
 }
 
-export async function submitReview(reviewId: string, comments: Comment[]): Promise<OpenResult> {
-  const request: SubmitReviewRequest = { comments };
+export async function submitReview(
+  reviewId: string,
+  comments: Comment[],
+  reviewScope?: ReviewScope
+): Promise<OpenResult> {
+  const request: SubmitReviewRequest = { comments, reviewScope };
   return json(
     await fetch(`/api/reviews/${reviewId}/submit`, {
       method: 'POST',
@@ -45,9 +50,10 @@ export async function submitReview(reviewId: string, comments: Comment[]): Promi
 
 export async function openReviewFile(
   reviewId: string,
-  filePath: string
+  filePath: string,
+  turnId?: string
 ): Promise<OpenFileResponse> {
-  const request: OpenFileRequest = { filePath };
+  const request: OpenFileRequest = { filePath, turnId };
   return json(
     await fetch(`/api/reviews/${reviewId}/files/open`, {
       method: 'POST',
@@ -62,9 +68,10 @@ export async function openReviewFile(
 export async function fetchCommitRangeDiff(
   reviewId: string,
   fromSha: string,
-  toSha: string
+  toSha: string,
+  turnId?: string
 ): Promise<CommitRangeDiffResponse> {
-  const request: CommitRangeDiffRequest = { fromSha, toSha };
+  const request: CommitRangeDiffRequest = { fromSha, toSha, turnId };
   return json(
     await fetch(`/api/reviews/${reviewId}/commits/range`, {
       method: 'POST',

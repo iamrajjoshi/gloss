@@ -2,15 +2,18 @@ import { Check, Send, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatLineRange } from '../../shared/comments';
 import { formatError } from '../../shared/errors';
+import type { ReviewScope } from '../../shared/types';
 import { submitReview } from '../api';
 import { isSubmitReviewShortcut } from '../shortcuts';
 import { useReviewStore } from '../store';
 
 export function SubmitBar({
   reviewId,
+  reviewScope,
   onSubmitted
 }: {
   reviewId: string;
+  reviewScope?: ReviewScope;
   onSubmitted?: () => Promise<void> | void;
 }) {
   const comments = useReviewStore((state) => state.comments);
@@ -27,7 +30,7 @@ export function SubmitBar({
     setState('submitting');
     setMessage(null);
     try {
-      await submitReview(reviewId, comments);
+      await submitReview(reviewId, comments, reviewScope);
       setState('done');
       setMessage('Submitted');
       try {
@@ -40,7 +43,7 @@ export function SubmitBar({
       setState('error');
       setMessage(formatError(error));
     }
-  }, [canSubmit, comments, onSubmitted, reviewId]);
+  }, [canSubmit, comments, onSubmitted, reviewId, reviewScope]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
