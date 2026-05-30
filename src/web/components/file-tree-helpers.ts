@@ -98,6 +98,7 @@ export function buildFileTree(files: DiffFile[]): FileTreeDirectoryNode {
     path: '',
     children: []
   };
+  const directoryIndexes = new Map<FileTreeDirectoryNode, Map<string, FileTreeDirectoryNode>>();
 
   for (const file of files) {
     const parts = file.path.split('/').filter(Boolean);
@@ -115,27 +116,42 @@ export function buildFileTree(files: DiffFile[]): FileTreeDirectoryNode {
           file
         });
       } else {
-        let directory = current.children.find(
-          (child): child is FileTreeDirectoryNode =>
-            child.type === 'directory' && child.name === part
-        );
-        if (!directory) {
-          directory = {
-            type: 'directory',
-            id: `dir:${path}`,
-            name: part,
-            path,
-            children: []
-          };
-          current.children.push(directory);
-        }
-        current = directory;
+        current = directoryChildFor(current, part, path, directoryIndexes);
       }
     }
   }
 
   sortTree(root);
   return root;
+}
+
+function directoryChildFor(
+  parent: FileTreeDirectoryNode,
+  name: string,
+  path: string,
+  directoryIndexes: Map<FileTreeDirectoryNode, Map<string, FileTreeDirectoryNode>>
+): FileTreeDirectoryNode {
+  let index = directoryIndexes.get(parent);
+  if (!index) {
+    index = new Map();
+    directoryIndexes.set(parent, index);
+  }
+
+  const existing = index.get(name);
+  if (existing) {
+    return existing;
+  }
+
+  const directory: FileTreeDirectoryNode = {
+    type: 'directory',
+    id: `dir:${path}`,
+    name,
+    path,
+    children: []
+  };
+  parent.children.push(directory);
+  index.set(name, directory);
+  return directory;
 }
 
 export function extensionIdForPath(path: string): string {

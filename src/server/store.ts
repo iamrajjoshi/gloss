@@ -64,9 +64,9 @@ export class ReviewStore {
 
   async list(): Promise<ReviewMeta[]> {
     await this.loadAllReviews();
-    return [...this.reviews.values()]
+    return Array.from(this.reviews.values())
       .map((record) => record.meta)
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   async get(id: string): Promise<ReviewRecord | null> {
@@ -91,7 +91,7 @@ export class ReviewStore {
       timestamp,
       base: record.diff.base,
       branch: record.diff.branch,
-      comments: [...comments].sort(compareCommentsByLocation)
+      comments: comments.toSorted(compareCommentsByLocation)
     };
     record.feedback = feedback;
     record.meta = { ...record.meta, status: 'submitted', submittedAt: timestamp };
@@ -278,9 +278,13 @@ export class ReviewStore {
       );
     }
 
-    await Promise.all(
-      entries.filter((entry) => entry.isDirectory()).map((entry) => this.loadReview(entry.name))
-    );
+    const reviewLoads: Array<Promise<ReviewRecord | null>> = [];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        reviewLoads.push(this.loadReview(entry.name));
+      }
+    }
+    await Promise.all(reviewLoads);
   }
 
   private async loadReview(id: string): Promise<ReviewRecord | null> {
@@ -303,16 +307,10 @@ export class ReviewStore {
 
     const meta = parseJsonFile(metaRaw, isStoredReviewMeta, 'review metadata', metaPath);
     const diff = parseJsonFile(diffRaw, isDiffPayload, 'review diff', diffPath);
-    const feedback = await readOptionalJsonFile(
-      globalReviewFeedbackFile(id),
-      isFeedbackBundle,
-      'review feedback'
-    );
-    const resolution = await readOptionalJsonFile(
-      globalReviewResolvedFile(id),
-      isResolutionBundle,
-      'review resolution'
-    );
+    const [feedback, resolution] = await Promise.all([
+      readOptionalJsonFile(globalReviewFeedbackFile(id), isFeedbackBundle, 'review feedback'),
+      readOptionalJsonFile(globalReviewResolvedFile(id), isResolutionBundle, 'review resolution')
+    ]);
 
     const record: ReviewRecord = {
       meta: {

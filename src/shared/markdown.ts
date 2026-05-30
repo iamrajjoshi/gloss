@@ -20,8 +20,18 @@ function languageForSnippet(filePath: string, snippet: string): string {
 }
 
 export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
-  const comments = [...bundle.comments].sort(compareCommentsByLocation);
-  const files = [...new Set(comments.map((comment) => comment.filePath))];
+  const comments = bundle.comments.toSorted(compareCommentsByLocation);
+  const commentsByFile = new Map<string, typeof comments>();
+  const files: string[] = [];
+  for (const comment of comments) {
+    const fileComments = commentsByFile.get(comment.filePath);
+    if (fileComments) {
+      fileComments.push(comment);
+    } else {
+      commentsByFile.set(comment.filePath, [comment]);
+      files.push(comment.filePath);
+    }
+  }
   const lines: string[] = [
     `# Gloss feedback - ${bundle.timestamp}`,
     `Review: ${bundle.reviewId}`,
@@ -32,9 +42,9 @@ export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
 
   for (const filePath of files) {
     lines.push(`## ${filePath}`, '');
-    for (const comment of comments.filter((item) => item.filePath === filePath)) {
+    for (const comment of commentsByFile.get(filePath) ?? []) {
       const snippet = comment.originalSnippet.trimEnd();
-      const firstSnippetLine = snippet.split('\n').find((line) => line.trim().length > 0);
+      const firstSnippetLine = firstNonEmptyLine(snippet);
       const heading =
         comment.startLine === comment.endLine && firstSnippetLine
           ? `### ${formatLineRange(comment)} - \`${firstSnippetLine.trim().slice(0, 80)}\``
@@ -48,4 +58,13 @@ export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
   }
 
   return `${lines.join('\n').trimEnd()}\n`;
+}
+
+function firstNonEmptyLine(text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    if (line.trim().length > 0) {
+      return line;
+    }
+  }
+  return undefined;
 }

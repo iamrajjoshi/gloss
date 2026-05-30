@@ -342,28 +342,6 @@ function HeroDiffScene() {
         Math.min(comment.startLine, comment.endLine) === line
     );
 
-  const renderLineComments = (side: DemoSide, line: number) =>
-    commentsForLine(side, line).map((comment) => (
-      <div className="scene-inline-comment" key={comment.id}>
-        <button
-          className="scene-inline-comment-body"
-          type="button"
-          onClick={() => openComment(comment)}
-        >
-          <MessageSquare size={14} />
-          <span>{comment.body}</span>
-        </button>
-        <button
-          className="scene-inline-comment-remove"
-          type="button"
-          title={`Remove comment on ${comment.side}${comment.startLine}`}
-          onClick={() => removeComment(comment.id)}
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
-    ));
-
   return (
     <section className="hero-scene" aria-label="Simulated Gloss code review">
       <div className="scene-topbar">
@@ -439,7 +417,11 @@ function HeroDiffScene() {
                     <span>applied by agent</span>
                   </div>
                 ) : null}
-                {renderLineComments(row.side, rowLine)}
+                <DemoLineComments
+                  comments={commentsForLine(row.side, rowLine)}
+                  onOpen={openComment}
+                  onRemove={removeComment}
+                />
                 {composerOpen &&
                 selectedLine.side === row.side &&
                 selectedLine.endLine === rowLine ? (
@@ -527,6 +509,33 @@ function HeroDiffScene() {
       </div>
     </section>
   );
+}
+
+function DemoLineComments({
+  comments,
+  onOpen,
+  onRemove
+}: {
+  comments: DemoComment[];
+  onOpen: (comment: DemoComment) => void;
+  onRemove: (id: string) => void;
+}) {
+  return comments.map((comment) => (
+    <div className="scene-inline-comment" key={comment.id}>
+      <button className="scene-inline-comment-body" type="button" onClick={() => onOpen(comment)}>
+        <MessageSquare size={14} />
+        <span>{comment.body}</span>
+      </button>
+      <button
+        className="scene-inline-comment-remove"
+        type="button"
+        title={`Remove comment on ${comment.side}${comment.startLine}`}
+        onClick={() => onRemove(comment.id)}
+      >
+        <Trash2 size={13} />
+      </button>
+    </div>
+  ));
 }
 
 function WorkflowStep({ step, title, body }: { step: string; title: string; body: string }) {
