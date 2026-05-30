@@ -36,6 +36,11 @@ import { reviewStore } from './store';
 const webRoot = fileURLToPath(new URL('../web', import.meta.url));
 const eventStreamHeartbeatMs = 15_000;
 
+interface AppOptions {
+  onReviewActivity?: () => void;
+  registerEventStream?: (close: () => void) => () => void;
+}
+
 const mimeTypes: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -47,7 +52,7 @@ const mimeTypes: Record<string, string> = {
   '.svg': 'image/svg+xml'
 };
 
-export function createApp(origin: string): Hono {
+export function createApp(origin: string, options: AppOptions = {}): Hono {
   const app = new Hono();
 
   app.get('/api/health', async (c) => {
@@ -76,6 +81,7 @@ export function createApp(origin: string): Hono {
       meta: record.meta,
       url: `${origin}/review/${record.meta.id}`
     };
+    options.onReviewActivity?.();
     return c.json(response, 201);
   });
 
@@ -107,6 +113,7 @@ export function createApp(origin: string): Hono {
       let pending: Promise<void> = Promise.resolve();
       let cleanup: (() => void) | null = null;
       let close: (() => void) | null = null;
+      let unregisterEventStream: (() => void) | null = null;
       const closedPromise = new Promise<void>((resolve) => {
         close = () => {
           if (closed) {
@@ -117,6 +124,7 @@ export function createApp(origin: string): Hono {
           resolve();
         };
       });
+      unregisterEventStream = options.registerEventStream?.(() => close?.()) ?? null;
       const send = (event: ReviewEvent) => {
         pending = pending
           .then(() => stream.writeSSE({ data: JSON.stringify(event) }))
@@ -137,6 +145,8 @@ export function createApp(origin: string): Hono {
       cleanup = () => {
         clearInterval(heartbeat);
         unsubscribe();
+        unregisterEventStream?.();
+        unregisterEventStream = null;
       };
       stream.onAbort(() => close?.());
 
@@ -179,6 +189,7 @@ export function createApp(origin: string): Hono {
       feedbackPath,
       markdownPath
     };
+    options.onReviewActivity?.();
     return c.json(response);
   });
 
@@ -305,7 +316,9 @@ export function createApp(origin: string): Hono {
       return parsed.response;
     }
     const body: ResolutionRequest = parsed.body;
-    return c.json(await reviewStore.markResolved(id, body.summary));
+    const result = await reviewStore.markResolved(id, body.summary);
+    options.onReviewActivity?.();
+    return c.json(result);
   });
 
   app.post('/api/reviews/:id/comments/:commentId/resolved', async (c) => {
@@ -326,7 +339,9 @@ export function createApp(origin: string): Hono {
       return parsed.response;
     }
     const body: ResolutionRequest = parsed.body;
-    return c.json(await reviewStore.resolveComment(id, commentId, body.summary));
+    const result = await reviewStore.resolveComment(id, commentId, body.summary);
+    options.onReviewActivity?.();
+    return c.json(result);
   });
 
   app.delete('/api/reviews/:id/comments/:commentId/resolved', async (c) => {
@@ -342,7 +357,9 @@ export function createApp(origin: string): Hono {
     if (!existing.feedback?.comments.some((comment) => comment.id === commentId)) {
       return c.json({ error: 'comment not found' }, 404);
     }
-    return c.json(await reviewStore.reopenComment(id, commentId));
+    const result = await reviewStore.reopenComment(id, commentId);
+    options.onReviewActivity?.();
+    return c.json(result);
   });
 
   app.get('/logo.svg', serveRootFile('logo.svg', mimeTypes['.svg']));

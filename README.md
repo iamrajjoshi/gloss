@@ -85,7 +85,7 @@ gloss watch <reviewId>
 gloss resolve <reviewId> [--comment <commentId>] [--summary <text>] [--json]
 gloss start [--port <port>]
 gloss status
-gloss stop
+gloss stop [--all]
 gloss doctor
 ```
 
@@ -99,6 +99,12 @@ best available merge-base from upstream, `origin/HEAD`, `origin/main`, or
 
 Use `--base <ref>` when you want an explicit comparison. Explicit base mode
 compares only against the requested ref and does not switch to a branch diff.
+
+`gloss open --json` waits until the browser review is submitted. Use
+`--no-watch` when a caller only needs to open the review and return immediately.
+The background server exits automatically after a short idle window with no
+pending reviews. `gloss doctor` reports unmanaged daemon processes, and
+`gloss stop --all` cleans them up.
 
 ## Review UI
 

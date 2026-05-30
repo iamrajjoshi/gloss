@@ -165,6 +165,12 @@ Open a review and return immediately:
 gloss open --json --no-watch
 ```
 
+`gloss open --json` intentionally waits until browser submission or timeout.
+Use `--no-watch` when the caller only needs to open the review. The background
+daemon exits automatically after a short idle window with no pending reviews.
+If cleanup looks stale, run `gloss doctor`; use `gloss stop --all` when you
+want to terminate all Gloss daemon processes for the current user.
+
 Mark a submitted review handled after applying feedback:
 
 ```bash

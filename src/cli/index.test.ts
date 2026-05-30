@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { serve } from '@hono/node-server';
@@ -15,6 +15,8 @@ import {
 import { writeServerInfo } from '../shared/server-info';
 import {
   isCreateReviewResponse,
+  isListReviewsResponse,
+  isOpenResult,
   isResolutionBundle,
   isResolveResult,
   isStoredReviewMeta,
@@ -51,6 +53,52 @@ afterEach(async () => {
 async function responseJson<T>(response: Response, guard: JsonGuard<T>, label: string): Promise<T> {
   const value: JsonValue = await response.json();
   return parseJsonValue(value, guard, label);
+}
+
+async function startServerFixture(): Promise<{
+  app: Awaited<ReturnType<typeof import('../server/index')['createApp']>>;
+}> {
+  const port = await getPort();
+  const { createApp } = await import('../server/index');
+  const app = createApp(`http://localhost:${port}`);
+  server = serve({ fetch: app.fetch, port });
+  await writeServerInfo({
+    pid: process.pid,
+    port,
+    version: packageVersion,
+    startedAt: '2026-05-23T12:00:00.000Z',
+    stateDir: globalStateDir()
+  });
+  return { app };
+}
+
+async function initializeGitRepoWithChange(): Promise<void> {
+  await execa('git', ['-c', 'init.defaultBranch=main', 'init'], { cwd: repoRoot });
+  await execa('git', ['config', 'user.email', 'gloss@example.com'], { cwd: repoRoot });
+  await execa('git', ['config', 'user.name', 'Gloss Test'], { cwd: repoRoot });
+  await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = false;\n');
+  await execa('git', ['add', 'api.ts'], { cwd: repoRoot });
+  await execa('git', ['commit', '-m', 'initial'], { cwd: repoRoot });
+  await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
+}
+
+function runCliInRepo(args: string[], options: { reject?: boolean } = {}) {
+  return execa(process.execPath, ['--import', tsxLoaderPath(), cliPath(), ...args], {
+    cwd: repoRoot,
+    reject: options.reject,
+    env: {
+      ...process.env,
+      GLOSS_STATE_DIR: process.env.GLOSS_STATE_DIR
+    }
+  });
+}
+
+function cliPath(): string {
+  return path.resolve('src/cli/index.ts');
+}
+
+function tsxLoaderPath(): string {
+  return path.resolve('node_modules/tsx/dist/loader.mjs');
 }
 
 describe('gloss resolve', () => {
@@ -219,5 +267,37 @@ describe('gloss resolve', () => {
       summary: null,
       comments: [{ commentId: 'comment-1', summary: 'fixed one comment' }]
     });
+  });
+});
+
+describe('gloss open', () => {
+  it('leaves the review pending when watch times out', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const result = await runCliInRepo(['open', '--no-open', '--timeout', '0.2', '--json'], {
+      reject: false
+    });
+    const listResponse = await app.request('/api/reviews');
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('watch timed out after 0.2 seconds');
+    expect(list.reviews).toHaveLength(1);
+    expect(list.reviews[0]?.status).toBe('pending');
+  });
+
+  it('leaves the review pending when opened with --no-watch', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const { stdout } = await runCliInRepo(['open', '--no-open', '--no-watch', '--json']);
+    const output = parseJson(stdout, isOpenResult, 'open command output');
+    const listResponse = await app.request('/api/reviews');
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
+
+    expect(output.reviewId).toBe(list.reviews[0]?.id);
+    expect(list.reviews).toHaveLength(1);
+    expect(list.reviews[0]?.status).toBe('pending');
   });
 });

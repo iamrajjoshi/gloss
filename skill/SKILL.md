@@ -55,6 +55,16 @@ comparison such as `origin/main`, `origin/master`, or `HEAD`.
 If the user asks only to open the review and not wait, run
 `gloss open --json --no-watch`.
 
+`gloss open --json` intentionally stays alive until the browser review is
+submitted or the watch timeout expires. If a long-running `gloss open` looks
+unexpected, first check whether it is waiting on an active browser review
+before killing processes.
+
+The background daemon shuts down on its own after a short idle window with no
+pending reviews. If process cleanup still looks stale, run `gloss doctor` to
+report unmanaged daemons. Use `gloss stop --all` only when intentionally
+cleaning up all Gloss daemon processes for the current user.
+
 If the user asks for a follow-up review after fixes, commits, or additional
 changes, run a fresh `gloss open --json` session instead of reusing the old
 review.
