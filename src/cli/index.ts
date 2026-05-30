@@ -19,6 +19,7 @@ import { assertGitAvailable, captureDiff, getRepoRoot } from './git';
 import {
   ensureServer,
   isServerResponsive,
+  listGlossDaemonPids,
   readServerInfo,
   serverUrl,
   startServer,
@@ -38,7 +39,7 @@ type CliJsonOutput =
   | ServerInfo
   | ReviewEvent
   | ResolveResult
-  | { stopped: boolean; info: ServerInfo | null }
+  | { stopped: boolean; info: ServerInfo | null; stoppedPids?: number[] }
   | {
       reviewId: string;
       url: string;
@@ -98,6 +99,7 @@ program
       const client = new ServerClient(serverUrl(info));
       const diff = await captureDiff(options.base);
       const { meta, url } = await client.createReview(diff);
+      const shouldWatch = options.watch !== false;
 
       if (options.printUrl) {
         printPlain(url);
@@ -106,7 +108,7 @@ program
         await openBrowser(url);
       }
 
-      if (options.watch === false) {
+      if (!shouldWatch) {
         const result = {
           reviewId: meta.id,
           url,
@@ -191,12 +193,19 @@ program
 program
   .command('stop')
   .description('Stop the managed background server')
-  .action(async () => {
+  .option('--all', 'stop all Gloss daemon processes for the current user')
+  .action(async (options: { all?: boolean }) => {
     const globals = program.opts<GlobalOptions>();
-    const result = await stopServer();
+    const result = await stopServer({ all: options.all });
     globals.json
       ? printJson(result)
-      : printPlain(result.stopped ? 'Gloss server stopped' : 'Gloss server was not running');
+      : printPlain(
+          options.all && result.stoppedPids
+            ? `Stopped ${result.stoppedPids.length} Gloss daemon(s)`
+            : result.stopped
+              ? 'Gloss server stopped'
+              : 'Gloss server was not running'
+        );
   });
 
 program
@@ -259,6 +268,24 @@ program
       ok: info ? await isServerResponsive(info) : false,
       detail: info ? serverUrl(info) : 'not started'
     });
+    try {
+      const daemonPids = await listGlossDaemonPids();
+      const unmanagedDaemonPids = daemonPids.filter((pid) => pid !== info?.pid);
+      checks.push({
+        name: 'daemon-processes',
+        ok: unmanagedDaemonPids.length === 0,
+        detail:
+          daemonPids.length === 0
+            ? 'none'
+            : `${daemonPids.length} found${unmanagedDaemonPids.length > 0 ? `; unmanaged pids ${unmanagedDaemonPids.join(', ')}` : ''}`
+      });
+    } catch (error) {
+      checks.push({
+        name: 'daemon-processes',
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error)
+      });
+    }
     if (globals.json) {
       printJson({ checks });
     } else {

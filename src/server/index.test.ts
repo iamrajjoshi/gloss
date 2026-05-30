@@ -585,6 +585,34 @@ describe('Gloss review API global persistence', () => {
     ]);
   });
 
+  it('notifies the daemon idle scheduler after review state changes', async () => {
+    const onReviewActivity = vi.fn();
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321', { onReviewActivity });
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+    await app.request(`/api/reviews/${created.meta.id}/resolved`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ summary: 'done' })
+    });
+
+    expect(onReviewActivity).toHaveBeenCalledTimes(3);
+  });
+
   it('rejects invalid comment IDs and pending review comment resolution', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
