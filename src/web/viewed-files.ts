@@ -50,7 +50,7 @@ export function saveViewedFiles(
     return;
   }
 
-  storage.setItem(key, JSON.stringify([...viewedFiles].sort()));
+  storage.setItem(key, JSON.stringify(Array.from(viewedFiles).toSorted()));
 }
 
 function browserStorage(): ViewedFileStorage | null {

@@ -59,15 +59,18 @@ export function FileTree({
   selectedExtensionIds
 }: FileTreeProps) {
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
-  const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(new Set());
+  const [collapsedDirectoryIds, setCollapsedDirectoryIds] = useState<Set<string>>(new Set());
   const filterShellRef = useRef<HTMLDivElement>(null);
   const tree = useMemo(() => buildFileTree(filteredFiles), [filteredFiles]);
+  const expandedDirectoryIds = useMemo(() => {
+    const expanded = collectExpandedDirectoryIds(tree);
+    for (const directoryId of collapsedDirectoryIds) {
+      expanded.delete(directoryId);
+    }
+    return expanded;
+  }, [collapsedDirectoryIds, tree]);
   const selectedCount = selectedExtensionIds.size;
   const extensionFilterActive = selectedCount !== extensionBuckets.length;
-
-  useEffect(() => {
-    setExpandedDirectoryIds(collectExpandedDirectoryIds(tree));
-  }, [tree]);
 
   useEffect(() => {
     if (!filterMenuOpen) {
@@ -94,9 +97,9 @@ export function FileTree({
   }, [filterMenuOpen]);
 
   const toggleDirectory = (directoryId: string) => {
-    setExpandedDirectoryIds((current) => {
+    setCollapsedDirectoryIds((current) => {
       const next = new Set(current);
-      next.has(directoryId) ? next.delete(directoryId) : next.add(directoryId);
+      expandedDirectoryIds.has(directoryId) ? next.add(directoryId) : next.delete(directoryId);
       return next;
     });
   };

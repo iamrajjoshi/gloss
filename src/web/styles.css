@@ -474,11 +474,14 @@ pre {
   display: grid;
   width: min(560px, calc(100vw - 32px));
   max-height: min(780px, calc(100vh - 48px));
+  margin: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--ide-border);
   border-radius: var(--radius-panel);
   background: #05080d;
+  color: var(--ide-fg);
+  padding: 0;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
 }
 
@@ -1137,7 +1140,14 @@ pre {
   z-index: 40;
   display: none;
   background: rgba(0, 0, 0, 0.58);
+  border: 0;
+  color: var(--ide-fg);
+  height: auto;
+  margin: 0;
+  max-height: none;
+  max-width: none;
   padding: var(--spacing-16);
+  width: auto;
 }
 
 .file-tree-drawer {

@@ -12,7 +12,7 @@ import {
   X
 } from 'lucide-react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { reviewResolutionCounts } from '../../shared/comments';
 import { reviewDisplayTitle } from '../../shared/review-title';
@@ -32,7 +32,7 @@ import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-
 import { SubmitBar } from '../components/SubmitBar';
 import { useReviewStore } from '../store';
 import { loadViewedFiles, saveViewedFiles } from '../viewed-files';
-import { type FileFilterState, syncFileFilterState } from './review-filter';
+import { type FileFilterState, selectedExtensionIdsForFilterState } from './review-filter';
 
 type CommitView =
   | { mode: 'all' }
@@ -46,8 +46,46 @@ const EMPTY_DIFF: Pick<DiffPayload, 'files' | 'stats'> = {
   files: [],
   stats: { files: 0, additions: 0, deletions: 0 }
 };
+const EMPTY_DIFF_FILES: DiffPayload['files'] = [];
+const EMPTY_COMMIT_DIFFS: CommitDiff[] = [];
+
+interface RangeDiffState {
+  diff: CommitRangeDiffResponse | null;
+  error: string | null;
+  loading: boolean;
+}
+
+type RangeDiffAction =
+  | { type: 'idle' }
+  | { type: 'loading' }
+  | { type: 'loaded'; diff: CommitRangeDiffResponse }
+  | { type: 'failed'; error: string };
+
+const IDLE_RANGE_DIFF_STATE: RangeDiffState = {
+  diff: null,
+  error: null,
+  loading: false
+};
+const RELATIVE_TIME_FORMAT = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short'
+});
+const RELATIVE_TIME_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+  ['year', 60 * 60 * 24 * 365],
+  ['month', 60 * 60 * 24 * 30],
+  ['week', 60 * 60 * 24 * 7],
+  ['day', 60 * 60 * 24],
+  ['hour', 60 * 60],
+  ['minute', 60],
+  ['second', 1]
+];
 
 export function Review({ reviewId }: { reviewId: string }) {
+  return <ReviewContent key={reviewId} reviewId={reviewId} />;
+}
+
+function ReviewContent({ reviewId }: { reviewId: string }) {
   const [record, setRecord] = useState<ReviewRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wrapLines, setWrapLines] = useState(false);
@@ -56,52 +94,62 @@ export function Review({ reviewId }: { reviewId: string }) {
   const [fileTreeDrawerOpen, setFileTreeDrawerOpen] = useState(false);
   const [fileTreeWidth, setFileTreeWidth] = useState(FILE_TREE_DEFAULT_WIDTH);
   const [filterState, setFilterState] = useState<FileFilterState>({
-    extensionIds: [],
     reviewId: null,
     searchQuery: '',
-    selectedExtensionIds: new Set()
+    selectedExtensionIds: null
   });
   const [commitView, setCommitView] = useState<CommitView>({ mode: 'all' });
-  const [rangeDiff, setRangeDiff] = useState<CommitRangeDiffResponse | null>(null);
-  const [rangeDiffError, setRangeDiffError] = useState<string | null>(null);
-  const [rangeDiffLoading, setRangeDiffLoading] = useState(false);
-  const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+  const [rangeDiffState, dispatchRangeDiff] = useReducer(rangeDiffReducer, IDLE_RANGE_DIFF_STATE);
+  const [viewedFiles, setViewedFiles] = useState<Set<string>>(() => loadViewedFiles(reviewId));
   const [openFileError, setOpenFileError] = useState<string | null>(null);
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
   const setDraft = useReviewStore((state) => state.setDraft);
   const displayTitle = record ? reviewDisplayTitle(record) : null;
+  const commitDiffs = record?.diff.commitDiffs ?? EMPTY_COMMIT_DIFFS;
+  const effectiveCommitView = useMemo(
+    () => commitViewForAvailableCommits(commitView, commitDiffs),
+    [commitDiffs, commitView]
+  );
   const selectedCommitDiff =
-    record && commitView.mode === 'single'
-      ? (record.diff.commitDiffs?.find((commitDiff) => commitDiff.commit.sha === commitView.sha) ??
+    record && effectiveCommitView.mode === 'single'
+      ? (commitDiffs.find((commitDiff) => commitDiff.commit.sha === effectiveCommitView.sha) ??
         null)
       : null;
   const selectedRangeDiff =
-    record && commitView.mode === 'range' ? (rangeDiff ?? EMPTY_DIFF) : null;
+    record && effectiveCommitView.mode === 'range' ? (rangeDiffState.diff ?? EMPTY_DIFF) : null;
   const activeDiff: Pick<DiffPayload, 'files' | 'stats'> | null = record
     ? (selectedRangeDiff ?? selectedCommitDiff ?? record.diff)
     : null;
-  const reviewFiles = activeDiff?.files ?? [];
+  const reviewFiles = activeDiff?.files ?? EMPTY_DIFF_FILES;
   const extensionBuckets = useMemo(() => buildExtensionBuckets(reviewFiles), [reviewFiles]);
   const extensionIds = useMemo(
     () => extensionBuckets.map((bucket) => bucket.id),
     [extensionBuckets]
   );
   const recordId = record?.meta.id ?? null;
-  const filtersMatchRecord = Boolean(record && filterState.reviewId === record.meta.id);
+  const filtersMatchRecord = Boolean(recordId && filterState.reviewId === recordId);
   const selectedExtensionIds = useMemo(
-    () => (filtersMatchRecord ? filterState.selectedExtensionIds : new Set(extensionIds)),
-    [extensionIds, filterState.selectedExtensionIds, filtersMatchRecord]
+    () =>
+      recordId
+        ? selectedExtensionIdsForFilterState(filterState, recordId, extensionIds)
+        : new Set(extensionIds),
+    [extensionIds, filterState, recordId]
   );
   const searchQuery = filtersMatchRecord ? filterState.searchQuery : '';
   const filteredFiles = useMemo(
     () => filterDiffFiles(reviewFiles, searchQuery, selectedExtensionIds),
     [reviewFiles, searchQuery, selectedExtensionIds]
   );
+  const visibleActiveFilePath =
+    activeFilePath && filteredFiles.some((file) => file.path === activeFilePath)
+      ? activeFilePath
+      : null;
 
   const applyRecord = useCallback(
     (nextRecord: ReviewRecord) => {
       setRecord(nextRecord);
+      document.title = reviewDisplayTitle(nextRecord);
       hydrateReview(nextRecord.feedback?.comments ?? [], nextRecord.resolution ?? null);
     },
     [hydrateReview]
@@ -114,17 +162,6 @@ export function Review({ reviewId }: { reviewId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    setRecord(null);
-    setError(null);
-    setActiveFilePath(null);
-    setFileTreeCollapsed(true);
-    setFileTreeDrawerOpen(false);
-    setCommitView({ mode: 'all' });
-    setRangeDiff(null);
-    setRangeDiffError(null);
-    setRangeDiffLoading(false);
-    setViewedFiles(loadViewedFiles(reviewId));
-    setOpenFileError(null);
     reset();
     fetchReview(reviewId)
       .then((nextRecord) => {
@@ -144,60 +181,31 @@ export function Review({ reviewId }: { reviewId: string }) {
   }, [reviewId, reset, applyRecord]);
 
   useEffect(() => {
-    if (!record) {
-      return;
-    }
-    const commitDiffs = record.diff.commitDiffs ?? [];
-    if (commitView.mode === 'single') {
-      if (!commitDiffs.some((commitDiff) => commitDiff.commit.sha === commitView.sha)) {
-        setCommitView({ mode: 'all' });
-      }
-      return;
-    }
-    if (commitView.mode === 'range') {
-      const fromIndex = commitDiffs.findIndex(
-        (commitDiff) => commitDiff.commit.sha === commitView.fromSha
-      );
-      const toIndex = commitDiffs.findIndex(
-        (commitDiff) => commitDiff.commit.sha === commitView.toSha
-      );
-      if (fromIndex < 0 || toIndex < 0 || fromIndex > toIndex) {
-        setCommitView({ mode: 'all' });
-      }
-    }
-  }, [record, commitView]);
-
-  useEffect(() => {
-    if (!record || commitView.mode !== 'range') {
-      setRangeDiff(null);
-      setRangeDiffError(null);
-      setRangeDiffLoading(false);
+    if (!record || effectiveCommitView.mode !== 'range') {
       return;
     }
 
     let cancelled = false;
-    setRangeDiff(null);
-    setRangeDiffError(null);
-    setRangeDiffLoading(true);
-    fetchCommitRangeDiff(reviewId, commitView.fromSha, commitView.toSha)
+    dispatchRangeDiff({ type: 'loading' });
+    fetchCommitRangeDiff(reviewId, effectiveCommitView.fromSha, effectiveCommitView.toSha)
       .then((nextRangeDiff) => {
         if (!cancelled) {
-          setRangeDiff(nextRangeDiff);
-          setRangeDiffLoading(false);
+          dispatchRangeDiff({ type: 'loaded', diff: nextRangeDiff });
         }
       })
       .catch((reason) => {
         if (!cancelled) {
-          setRangeDiff(null);
-          setRangeDiffLoading(false);
-          setRangeDiffError(reason instanceof Error ? reason.message : String(reason));
+          dispatchRangeDiff({
+            error: reason instanceof Error ? reason.message : String(reason),
+            type: 'failed'
+          });
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [commitView, record, reviewId]);
+  }, [effectiveCommitView, record, reviewId]);
 
   useEffect(() => {
     const events = new EventSource(`/api/reviews/${reviewId}/events`);
@@ -214,28 +222,6 @@ export function Review({ reviewId }: { reviewId: string }) {
       events.close();
     };
   }, [reviewId, reloadReview]);
-
-  useEffect(() => {
-    if (displayTitle) {
-      document.title = displayTitle;
-    }
-  }, [displayTitle]);
-
-  useEffect(() => {
-    if (!recordId) {
-      return;
-    }
-    setFilterState((current) => syncFileFilterState(current, recordId, extensionIds));
-  }, [extensionIds, recordId]);
-
-  useEffect(() => {
-    if (!activeFilePath) {
-      return;
-    }
-    if (!filteredFiles.some((file) => file.path === activeFilePath)) {
-      setActiveFilePath(null);
-    }
-  }, [activeFilePath, filteredFiles]);
 
   if (error) {
     return (
@@ -262,29 +248,29 @@ export function Review({ reviewId }: { reviewId: string }) {
   const scope = record.diff.scope;
   const stats = activeDiff.stats;
   const readOnly = isResolvableReviewStatus(record.meta.status);
+  const visibleRangeDiffError = effectiveCommitView.mode === 'range' ? rangeDiffState.error : null;
+  const visibleRangeDiffLoading = effectiveCommitView.mode === 'range' && rangeDiffState.loading;
   const viewedCount = activeDiff.files.filter((file) => viewedFiles.has(file.path)).length;
   const viewedProgress =
     activeDiff.files.length === 0 ? 0 : Math.round((viewedCount / activeDiff.files.length) * 100);
   const updateSearchQuery = (searchQuery: string) => {
     setFilterState((current) => ({
-      extensionIds,
       reviewId: record.meta.id,
       searchQuery,
       selectedExtensionIds:
-        current.reviewId === record.meta.id ? current.selectedExtensionIds : new Set(extensionIds)
+        current.reviewId === record.meta.id ? current.selectedExtensionIds : null
     }));
   };
   const toggleExtension = (extensionId: string) => {
     setFilterState((current) => {
       const selectedExtensionIds =
-        current.reviewId === record.meta.id
+        current.reviewId === record.meta.id && current.selectedExtensionIds
           ? new Set(current.selectedExtensionIds)
           : new Set(extensionIds);
       selectedExtensionIds.has(extensionId)
         ? selectedExtensionIds.delete(extensionId)
         : selectedExtensionIds.add(extensionId);
       return {
-        extensionIds,
         reviewId: record.meta.id,
         searchQuery: current.reviewId === record.meta.id ? current.searchQuery : '',
         selectedExtensionIds
@@ -293,15 +279,13 @@ export function Review({ reviewId }: { reviewId: string }) {
   };
   const selectAllExtensions = () => {
     setFilterState((current) => ({
-      extensionIds,
       reviewId: record.meta.id,
       searchQuery: current.reviewId === record.meta.id ? current.searchQuery : '',
-      selectedExtensionIds: new Set(extensionIds)
+      selectedExtensionIds: null
     }));
   };
   const clearExtensions = () => {
     setFilterState((current) => ({
-      extensionIds,
       reviewId: record.meta.id,
       searchQuery: current.reviewId === record.meta.id ? current.searchQuery : '',
       selectedExtensionIds: new Set()
@@ -359,9 +343,9 @@ export function Review({ reviewId }: { reviewId: string }) {
       setOpenFileError(reason instanceof Error ? reason.message : String(reason));
     }
   };
-  const renderFileTree = () => (
+  const sidebarFileTree = (
     <FileTree
-      activeFilePath={activeFilePath}
+      activeFilePath={visibleActiveFilePath}
       extensionBuckets={extensionBuckets}
       files={activeDiff.files}
       filteredFiles={filteredFiles}
@@ -377,7 +361,7 @@ export function Review({ reviewId }: { reviewId: string }) {
   );
   const drawerFileTree = (
     <FileTree
-      activeFilePath={activeFilePath}
+      activeFilePath={visibleActiveFilePath}
       extensionBuckets={extensionBuckets}
       files={activeDiff.files}
       filteredFiles={filteredFiles}
@@ -411,10 +395,13 @@ export function Review({ reviewId }: { reviewId: string }) {
           </div>
           <div className="topbar-actions">
             <CommitSelector
-              commitDiffs={record.diff.commitDiffs ?? []}
-              value={commitView}
+              commitDiffs={commitDiffs}
+              value={effectiveCommitView}
               onChange={(nextCommitView) => {
                 setCommitView(nextCommitView);
+                if (nextCommitView.mode !== 'range') {
+                  dispatchRangeDiff({ type: 'idle' });
+                }
                 setDraft(null);
               }}
             />
@@ -471,8 +458,10 @@ export function Review({ reviewId }: { reviewId: string }) {
         </div>
       </header>
       {openFileError ? <div className="open-file-message error">{openFileError}</div> : null}
-      {rangeDiffError ? <div className="open-file-message error">{rangeDiffError}</div> : null}
-      {rangeDiffLoading ? <div className="range-loading">Loading range diff</div> : null}
+      {visibleRangeDiffError ? (
+        <div className="open-file-message error">{visibleRangeDiffError}</div>
+      ) : null}
+      {visibleRangeDiffLoading ? <div className="range-loading">Loading range diff</div> : null}
       {readOnly ? <ReviewStateBanner record={record} /> : null}
       <div
         className={`review-body ${fileTreeCollapsed ? 'file-tree-collapsed' : ''}`}
@@ -493,7 +482,7 @@ export function Review({ reviewId }: { reviewId: string }) {
             </button>
           ) : (
             <>
-              {renderFileTree()}
+              {sidebarFileTree}
               <button
                 aria-label="Resize file tree"
                 className="file-tree-resize-handle"
@@ -506,7 +495,7 @@ export function Review({ reviewId }: { reviewId: string }) {
         </aside>
         <section className="review-diff-column">
           <DiffView
-            activeFilePath={activeFilePath}
+            activeFilePath={visibleActiveFilePath}
             diff={activeDiff}
             emptyState={filteredEmptyState}
             files={filteredFiles}
@@ -520,8 +509,8 @@ export function Review({ reviewId }: { reviewId: string }) {
         </section>
       </div>
       {fileTreeDrawerOpen ? (
-        <div className="file-tree-drawer-backdrop">
-          <aside className="file-tree-drawer" role="dialog" aria-modal="true" aria-label="Files">
+        <dialog className="file-tree-drawer-backdrop" aria-label="Files" open>
+          <aside className="file-tree-drawer">
             <div className="file-tree-drawer-header">
               <span>Changed files</span>
               <button
@@ -535,7 +524,7 @@ export function Review({ reviewId }: { reviewId: string }) {
             </div>
             {drawerFileTree}
           </aside>
-        </div>
+        </dialog>
       ) : null}
       {readOnly ? null : <SubmitBar reviewId={reviewId} onSubmitted={reloadReview} />}
     </main>
@@ -562,6 +551,34 @@ function ReviewRefSummary({
   );
 }
 
+function commitViewForAvailableCommits(value: CommitView, commitDiffs: CommitDiff[]): CommitView {
+  if (value.mode === 'all') {
+    return value;
+  }
+  if (value.mode === 'single') {
+    return commitDiffs.some((commitDiff) => commitDiff.commit.sha === value.sha)
+      ? value
+      : { mode: 'all' };
+  }
+
+  const fromIndex = commitDiffs.findIndex((commitDiff) => commitDiff.commit.sha === value.fromSha);
+  const toIndex = commitDiffs.findIndex((commitDiff) => commitDiff.commit.sha === value.toSha);
+  return fromIndex >= 0 && toIndex >= fromIndex ? value : { mode: 'all' };
+}
+
+function rangeDiffReducer(_state: RangeDiffState, action: RangeDiffAction): RangeDiffState {
+  switch (action.type) {
+    case 'idle':
+      return IDLE_RANGE_DIFF_STATE;
+    case 'loading':
+      return { diff: null, error: null, loading: true };
+    case 'loaded':
+      return { diff: action.diff, error: null, loading: false };
+    case 'failed':
+      return { diff: null, error: action.error, loading: false };
+  }
+}
+
 function CommitSelector({
   commitDiffs,
   value,
@@ -574,7 +591,7 @@ function CommitSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [draftMode, setDraftMode] = useState<'all' | 'selected'>('all');
   const [draftSelectedShas, setDraftSelectedShas] = useState<Set<string>>(new Set());
-  const dialogRef = useRef<HTMLElement | null>(null);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const options = useMemo(
     () =>
@@ -687,12 +704,12 @@ function CommitSelector({
       {isOpen
         ? createPortal(
             <div className="commit-picker-backdrop">
-              <section
+              <dialog
                 aria-labelledby="commit-picker-title"
                 aria-modal="true"
                 className="commit-picker-dialog"
                 ref={dialogRef}
-                role="dialog"
+                open
                 tabIndex={-1}
               >
                 <header className="commit-picker-header">
@@ -788,7 +805,7 @@ function CommitSelector({
                     Save
                   </button>
                 </footer>
-              </section>
+              </dialog>
             </div>,
             document.body
           )
@@ -823,9 +840,13 @@ function shasForCommitView(value: CommitView, options: CommitPickerOption[]): Se
 }
 
 function selectedCommitIndexes(selectedShas: Set<string>, options: CommitPickerOption[]): number[] {
-  return options
-    .map((option, index) => (selectedShas.has(option.sha) ? index : -1))
-    .filter((index) => index >= 0);
+  const indexes: number[] = [];
+  for (const [index, option] of options.entries()) {
+    if (selectedShas.has(option.sha)) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
 }
 
 function toggleCommitRangeSelection(
@@ -923,22 +944,10 @@ function formatRelativeTime(timestamp: string): string {
     return 'recently';
   }
   const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['year', 60 * 60 * 24 * 365],
-    ['month', 60 * 60 * 24 * 30],
-    ['week', 60 * 60 * 24 * 7],
-    ['day', 60 * 60 * 24],
-    ['hour', 60 * 60],
-    ['minute', 60],
-    ['second', 1]
-  ];
   const [unit, secondsPerUnit] =
-    units.find(([, unitSeconds]) => Math.abs(diffSeconds) >= unitSeconds) ??
-    units[units.length - 1];
-  return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(
-    Math.round(diffSeconds / secondsPerUnit),
-    unit
-  );
+    RELATIVE_TIME_UNITS.find(([, unitSeconds]) => Math.abs(diffSeconds) >= unitSeconds) ??
+    RELATIVE_TIME_UNITS[RELATIVE_TIME_UNITS.length - 1];
+  return RELATIVE_TIME_FORMAT.format(Math.round(diffSeconds / secondsPerUnit), unit);
 }
 
 function ReviewStateBanner({ record }: { record: ReviewRecord }) {
@@ -987,8 +996,5 @@ function stateContent(record: ReviewRecord): { title: string; body: string } | n
 }
 
 function formatTimestamp(timestamp: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(new Date(timestamp));
+  return TIMESTAMP_FORMAT.format(new Date(timestamp));
 }

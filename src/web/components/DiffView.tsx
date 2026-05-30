@@ -21,6 +21,11 @@ interface SelectionRef {
   end: RowRef;
 }
 
+interface HighlightedFile {
+  file: DiffFile;
+  lines: HighlightedDiffLines | null;
+}
+
 export function DiffView({
   activeFilePath = null,
   emptyState = null,
@@ -45,23 +50,19 @@ export function DiffView({
   onOpenFile?: (filePath: string) => void;
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+  const expandedActiveFilePath = useRef(activeFilePath);
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
   const renderedFiles = files ?? diff.files;
 
-  useEffect(() => {
-    if (!activeFilePath) {
-      return;
+  if (activeFilePath !== expandedActiveFilePath.current) {
+    expandedActiveFilePath.current = activeFilePath;
+    if (activeFilePath && collapsedFiles.has(activeFilePath)) {
+      const nextCollapsedFiles = new Set(collapsedFiles);
+      nextCollapsedFiles.delete(activeFilePath);
+      setCollapsedFiles(nextCollapsedFiles);
     }
-    setCollapsedFiles((current) => {
-      if (!current.has(activeFilePath)) {
-        return current;
-      }
-      const next = new Set(current);
-      next.delete(activeFilePath);
-      return next;
-    });
-  }, [activeFilePath]);
+  }
 
   const handleViewedChange = (filePath: string, viewed: boolean) => {
     if (viewed) {
@@ -170,7 +171,7 @@ function DiffFileTable({
   const setDraft = useReviewStore((state) => state.setDraft);
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
-  const [highlightedLines, setHighlightedLines] = useState<HighlightedDiffLines | null>(null);
+  const [highlightedFile, setHighlightedFile] = useState<HighlightedFile | null>(null);
   const selectionRef = useRef<SelectionRef | null>(null);
   const cleanupSelectionListeners = useRef<(() => void) | null>(null);
   const visualIndexByLine = useMemo(() => buildVisualIndex(file), [file]);
@@ -189,6 +190,7 @@ function DiffFileTable({
     draft && draft.filePath === file.path
       ? visualRangeFor(visualIndexByLine, draft.side, draft.startLine, draft.endLine)
       : null;
+  const highlightedLines = highlightedFile?.file === file ? highlightedFile.lines : null;
 
   const openDraft = (selection: SelectionRef) => {
     const { start: row, end } = selection;
@@ -309,17 +311,16 @@ function DiffFileTable({
 
   useEffect(() => {
     let cancelled = false;
-    setHighlightedLines(null);
     import('../syntax')
       .then(({ highlightDiffFile }) => highlightDiffFile(file))
       .then((nextHighlightedLines) => {
         if (!cancelled) {
-          setHighlightedLines(nextHighlightedLines);
+          setHighlightedFile({ file, lines: nextHighlightedLines });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setHighlightedLines(null);
+          setHighlightedFile({ file, lines: null });
         }
       });
 

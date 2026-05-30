@@ -1,42 +1,60 @@
 import { describe, expect, it } from 'vitest';
-import { type FileFilterState, syncFileFilterState } from './review-filter';
+import { type FileFilterState, selectedExtensionIdsForFilterState } from './review-filter';
 
-describe('syncFileFilterState', () => {
+describe('selectedExtensionIdsForFilterState', () => {
   it('selects new extension buckets when every previous bucket was selected', () => {
     const current = makeFilterState({
-      extensionIds: ['.ts', '.tsx'],
-      selectedExtensionIds: ['.ts', '.tsx']
+      selectedExtensionIds: null
     });
 
-    const next = syncFileFilterState(current, 'review-1', ['.md', '.ts', '.tsx']);
+    const selectedExtensionIds = selectedExtensionIdsForFilterState(current, 'review-1', [
+      '.md',
+      '.ts',
+      '.tsx'
+    ]);
 
-    expect([...next.selectedExtensionIds]).toEqual(['.md', '.ts', '.tsx']);
-    expect(next.searchQuery).toBe('tree');
+    expect([...selectedExtensionIds]).toEqual(['.md', '.ts', '.tsx']);
   });
 
   it('keeps manually narrowed extension filters narrowed across bucket updates', () => {
     const current = makeFilterState({
-      extensionIds: ['.ts', '.tsx'],
       selectedExtensionIds: ['.tsx']
     });
 
-    const next = syncFileFilterState(current, 'review-1', ['.md', '.ts', '.tsx']);
+    const selectedExtensionIds = selectedExtensionIdsForFilterState(current, 'review-1', [
+      '.md',
+      '.ts',
+      '.tsx'
+    ]);
 
-    expect([...next.selectedExtensionIds]).toEqual(['.tsx']);
+    expect([...selectedExtensionIds]).toEqual(['.tsx']);
+  });
+
+  it('selects all current buckets when state belongs to another review', () => {
+    const current = makeFilterState({
+      reviewId: 'review-2',
+      selectedExtensionIds: ['.tsx']
+    });
+
+    const selectedExtensionIds = selectedExtensionIdsForFilterState(current, 'review-1', [
+      '.md',
+      '.tsx'
+    ]);
+
+    expect([...selectedExtensionIds]).toEqual(['.md', '.tsx']);
   });
 });
 
 function makeFilterState({
-  extensionIds,
+  reviewId = 'review-1',
   selectedExtensionIds
 }: {
-  extensionIds: string[];
-  selectedExtensionIds: string[];
+  reviewId?: string;
+  selectedExtensionIds: string[] | null;
 }): FileFilterState {
   return {
-    extensionIds,
-    reviewId: 'review-1',
+    reviewId,
     searchQuery: 'tree',
-    selectedExtensionIds: new Set(selectedExtensionIds)
+    selectedExtensionIds: selectedExtensionIds ? new Set(selectedExtensionIds) : null
   };
 }
