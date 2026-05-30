@@ -24,8 +24,12 @@ user clicks Submit in the browser, and that exit is your signal to resume.
 
 When `gloss open --json` exits, parse the JSON output. Prefer reading
 `feedbackPath` from disk when present, because it contains the durable structured
-feedback bundle. Address every comment in file/line order, then run the
-narrowest relevant validation. After validation, run
+feedback bundle. Check `feedback.reviewScope` before editing: missing or
+`{ "mode": "all" }` means the whole turn was submitted; `{ "mode": "single" }`
+or `{ "mode": "range" }` means the human submitted feedback while viewing only
+that commit preview. Treat scoped feedback as comments on that slice, and do not
+infer that unreviewed commits were approved. Address every comment in file/line
+order, then run the narrowest relevant validation. After validation, run
 `gloss resolve <reviewId> --summary "<what changed>"`.
 When tracking progress comment-by-comment is useful, run
 `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`
@@ -38,14 +42,17 @@ gloss open --json --no-watch
 ```
 
 If the user asks for another pass after fixes, commits, or additional changes,
-start a fresh review session with `gloss open --json`.
+continue the same review with `gloss open --review <reviewId> --json`.
+The browser keeps one stable review URL; each follow-up is a new turn in the
+same review history. Use a fresh `gloss open --json` only for unrelated work or
+when the user explicitly wants a new review.
 
 Gloss feedback is stored under:
 
 ```text
-~/.gloss/reviews/<reviewId>/feedback.json
-~/.gloss/reviews/<reviewId>/feedback.md
-~/.gloss/reviews/<reviewId>/resolved.json
+~/.gloss/reviews/<reviewId>/turns/<turnId>/feedback.json
+~/.gloss/reviews/<reviewId>/turns/<turnId>/feedback.md
+~/.gloss/reviews/<reviewId>/turns/<turnId>/resolved.json
 ```
 
 Use `feedback.json` for structured agent work. Use `feedback.md` when a human
@@ -60,6 +67,7 @@ Useful commands:
 ```bash
 gloss status --json
 gloss watch <reviewId> --json
+gloss open --review <reviewId> --json
 gloss resolve <reviewId> --comment <commentId> --summary "Applied one comment"
 gloss resolve <reviewId> --summary "Applied review feedback"
 gloss doctor

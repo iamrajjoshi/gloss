@@ -94,6 +94,7 @@ export interface CommitDiff {
 export interface CommitRangeDiffRequest {
   fromSha: string;
   toSha: string;
+  turnId?: string;
 }
 
 export interface CommitRangeDiffResponse {
@@ -103,6 +104,13 @@ export interface CommitRangeDiffResponse {
   rawDiff: string;
   files: DiffFile[];
 }
+
+export const REVIEW_SCOPE_MODES = ['all', 'single', 'range'] as const;
+
+export type ReviewScope =
+  | { mode: 'all' }
+  | { mode: 'single'; sha: string }
+  | { mode: 'range'; fromSha: string; toSha: string };
 
 interface DiffScope {
   mode: DiffScopeMode;
@@ -134,6 +142,8 @@ export interface ReviewMeta {
   submittedAt?: string;
   resolvedAt?: string;
   artifactDir: string;
+  activeTurnId?: string;
+  turns?: ReviewTurnSummary[];
   feedbackPath?: string;
   markdownPath?: string;
 }
@@ -141,9 +151,12 @@ export interface ReviewMeta {
 export interface FeedbackBundle {
   version: 1;
   reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
   timestamp: string;
   base: DiffPayload['base'];
   branch: string | null;
+  reviewScope?: ReviewScope;
   comments: Comment[];
 }
 
@@ -160,6 +173,8 @@ export interface ResolvedComment {
 
 export interface ResolutionBundle {
   reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
   status: ResolutionStatus;
   summary: string | null;
   resolvedAt: string | null;
@@ -175,6 +190,8 @@ export interface ResolutionCounts {
 export interface ResolveResult {
   ok: true;
   reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
   status: ReviewStatus;
   resolutionStatus: ResolutionStatus;
   comments: ResolutionCounts;
@@ -185,7 +202,8 @@ export interface ResolveResult {
 export const REVIEW_UPDATE_REASONS = [
   'review-resolved',
   'comment-resolved',
-  'comment-reopened'
+  'comment-reopened',
+  'turn-created'
 ] as const;
 
 export type ReviewUpdateReason = (typeof REVIEW_UPDATE_REASONS)[number];
@@ -193,13 +211,24 @@ export type ReviewUpdateReason = (typeof REVIEW_UPDATE_REASONS)[number];
 export type ReviewEvent =
   | { type: 'review.opened'; reviewId: string }
   | {
+      type: 'review.turn.created';
+      reviewId: string;
+      turnId: string;
+      turnIndex: number;
+      reused: boolean;
+    }
+  | {
       type: 'review.submitted';
       reviewId: string;
+      turnId?: string;
+      turnIndex?: number;
       counts: { files: number; comments: number };
     }
   | {
       type: 'review.updated';
       reviewId: string;
+      turnId?: string;
+      turnIndex?: number;
       reason: ReviewUpdateReason;
       status: ReviewStatus;
       resolutionStatus: ResolutionStatus;
@@ -207,8 +236,35 @@ export type ReviewEvent =
     }
   | { type: 'review.cancelled'; reviewId: string };
 
+export interface ReviewTurnMeta {
+  id: string;
+  index: number;
+  status: ReviewStatus;
+  createdAt: string;
+  submittedAt?: string;
+  resolvedAt?: string;
+  artifactDir: string;
+  diffPath: string;
+  feedbackPath?: string;
+  markdownPath?: string;
+  resolvedPath?: string;
+}
+
+export interface ReviewTurnSummary extends ReviewTurnMeta {
+  capturedAt: string;
+  stats: DiffStats;
+  comments: ResolutionCounts;
+}
+
+export interface ReviewTurn extends ReviewTurnMeta {
+  diff: DiffPayload;
+  feedback?: FeedbackBundle;
+  resolution?: ResolutionBundle;
+}
+
 export interface ReviewRecord {
   meta: ReviewMeta;
+  turns: ReviewTurn[];
   diff: DiffPayload;
   feedback?: FeedbackBundle;
   resolution?: ResolutionBundle;
@@ -224,6 +280,8 @@ export interface ServerInfo {
 
 export interface OpenResult {
   reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
   url: string;
   files: number;
   comments?: number;
@@ -238,9 +296,17 @@ export interface HealthResponse {
   activeReviews: number;
 }
 
-export interface CreateReviewResponse {
+interface ReviewRegistrationResponse {
   meta: ReviewMeta;
   url: string;
+  turn?: ReviewTurnSummary;
+}
+
+export interface CreateReviewResponse extends ReviewRegistrationResponse {}
+
+export interface CreateReviewTurnResponse extends ReviewRegistrationResponse {
+  turn: ReviewTurnSummary;
+  reused: boolean;
 }
 
 export interface ListReviewsResponse {
@@ -249,14 +315,17 @@ export interface ListReviewsResponse {
 
 export interface SubmitReviewRequest {
   comments: Comment[];
+  reviewScope?: ReviewScope;
 }
 
 export interface ResolutionRequest {
   summary?: string;
+  turn?: string;
 }
 
 export interface OpenFileRequest {
   filePath: string;
+  turnId?: string;
 }
 
 export interface OpenFileResponse {

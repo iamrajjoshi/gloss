@@ -85,4 +85,26 @@ describe('serializeFeedbackMarkdown', () => {
 
     expect(serializeFeedbackMarkdown(bundle)).toContain('```diff\n box {');
   });
+
+  it('includes the submitted review scope when present', () => {
+    const bundle: FeedbackBundle = {
+      version: 1,
+      reviewId: '01HFXJ3K7Z6E2BQYR4M0V8N5DH',
+      turnId: '01HFXJ3K7Z6E2BQYR4M0V8N5DJ',
+      turnIndex: 2,
+      timestamp: '2026-05-21T14:32:11Z',
+      base: { ref: 'HEAD', sha: 'a3f8b21ffffff' },
+      branch: 'raj--gloss--test',
+      reviewScope: {
+        mode: 'range',
+        fromSha: '1234567890abcdef1234567890abcdef12345678',
+        toSha: 'abcdef1234567890abcdef1234567890abcdef12'
+      },
+      comments: []
+    };
+
+    expect(serializeFeedbackMarkdown(bundle)).toContain(
+      'Review scope: Commit range 1234567 to abcdef1'
+    );
+  });
 });

@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -15,13 +16,16 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { reviewResolutionCounts } from '../../shared/comments';
+import { reviewScopeLabel } from '../../shared/review-scope';
 import { reviewDisplayTitle } from '../../shared/review-title';
 import { isResolvableReviewStatus } from '../../shared/reviews';
 import type {
   CommitDiff,
   CommitRangeDiffResponse,
   DiffPayload,
-  ReviewRecord
+  ReviewRecord,
+  ReviewScope,
+  ReviewTurn
 } from '../../shared/types';
 import { isReviewEvent, parseJson } from '../../shared/validation';
 import { fetchCommitRangeDiff, fetchReview, openReviewFile } from '../api';
@@ -32,7 +36,13 @@ import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-
 import { SubmitBar } from '../components/SubmitBar';
 import { useReviewStore } from '../store';
 import { loadViewedFiles, saveViewedFiles } from '../viewed-files';
+import { shouldReloadReviewForEvent } from './review-events';
 import { type FileFilterState, selectedExtensionIdsForFilterState } from './review-filter';
+import {
+  branchPillForTitle,
+  reviewTitlePresentation,
+  shouldShowTurnHistory
+} from './review-header';
 
 type CommitView =
   | { mode: 'all' }
@@ -61,6 +71,11 @@ type RangeDiffAction =
   | { type: 'loaded'; diff: CommitRangeDiffResponse }
   | { type: 'failed'; error: string };
 
+interface ViewedFilesState {
+  storageKey: string;
+  files: Set<string>;
+}
+
 const IDLE_RANGE_DIFF_STATE: RangeDiffState = {
   diff: null,
   error: null,
@@ -85,6 +100,19 @@ export function Review({ reviewId }: { reviewId: string }) {
   return <ReviewContent key={reviewId} reviewId={reviewId} />;
 }
 
+function scrollToFile(filePath: string) {
+  const target = document.getElementById(fileCardElementId(filePath));
+  if (!target) {
+    return;
+  }
+  const headerOffset = 156;
+  const targetTop = target.getBoundingClientRect().top + window.scrollY - headerOffset;
+  window.scrollTo({
+    behavior: 'smooth',
+    top: Math.max(targetTop, 0)
+  });
+}
+
 function ReviewContent({ reviewId }: { reviewId: string }) {
   const [record, setRecord] = useState<ReviewRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,28 +126,41 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     searchQuery: '',
     selectedExtensionIds: null
   });
+  const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [commitView, setCommitView] = useState<CommitView>({ mode: 'all' });
   const [rangeDiffState, dispatchRangeDiff] = useReducer(rangeDiffReducer, IDLE_RANGE_DIFF_STATE);
-  const [viewedFiles, setViewedFiles] = useState<Set<string>>(() => loadViewedFiles(reviewId));
+  const [viewedFilesState, setViewedFilesState] = useState<ViewedFilesState>(() => ({
+    storageKey: reviewId,
+    files: loadViewedFiles(reviewId)
+  }));
   const [openFileError, setOpenFileError] = useState<string | null>(null);
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
   const setDraft = useReviewStore((state) => state.setDraft);
-  const displayTitle = record ? reviewDisplayTitle(record) : null;
-  const commitDiffs = record?.diff.commitDiffs ?? EMPTY_COMMIT_DIFFS;
+  const latestTurn = record?.turns[record.turns.length - 1] ?? null;
+  const latestTurnId = latestTurn?.id ?? null;
+  const selectedTurn =
+    record && latestTurn
+      ? (record.turns.find((turn) => turn.id === selectedTurnId) ?? latestTurn)
+      : null;
+  const displayRecord = record && selectedTurn ? recordForTurn(record, selectedTurn) : null;
+  const displayTitle = displayRecord ? reviewDisplayTitle(displayRecord) : null;
+  const commitDiffs = selectedTurn?.diff.commitDiffs ?? EMPTY_COMMIT_DIFFS;
   const effectiveCommitView = useMemo(
     () => commitViewForAvailableCommits(commitView, commitDiffs),
     [commitDiffs, commitView]
   );
   const selectedCommitDiff =
-    record && effectiveCommitView.mode === 'single'
+    selectedTurn && effectiveCommitView.mode === 'single'
       ? (commitDiffs.find((commitDiff) => commitDiff.commit.sha === effectiveCommitView.sha) ??
         null)
       : null;
   const selectedRangeDiff =
-    record && effectiveCommitView.mode === 'range' ? (rangeDiffState.diff ?? EMPTY_DIFF) : null;
-  const activeDiff: Pick<DiffPayload, 'files' | 'stats'> | null = record
-    ? (selectedRangeDiff ?? selectedCommitDiff ?? record.diff)
+    selectedTurn && effectiveCommitView.mode === 'range'
+      ? (rangeDiffState.diff ?? EMPTY_DIFF)
+      : null;
+  const activeDiff: Pick<DiffPayload, 'files' | 'stats'> | null = selectedTurn
+    ? (selectedRangeDiff ?? selectedCommitDiff ?? selectedTurn.diff)
     : null;
   const reviewFiles = activeDiff?.files ?? EMPTY_DIFF_FILES;
   const extensionBuckets = useMemo(() => buildExtensionBuckets(reviewFiles), [reviewFiles]);
@@ -141,24 +182,36 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     () => filterDiffFiles(reviewFiles, searchQuery, selectedExtensionIds),
     [reviewFiles, searchQuery, selectedExtensionIds]
   );
+  const viewedStorageKey = selectedTurn ? `${reviewId}:${selectedTurn.id}` : reviewId;
+  let viewedFiles = viewedFilesState.files;
+  if (viewedFilesState.storageKey !== viewedStorageKey) {
+    viewedFiles = loadViewedFiles(viewedStorageKey);
+    setViewedFilesState({ storageKey: viewedStorageKey, files: viewedFiles });
+  }
   const visibleActiveFilePath =
     activeFilePath && filteredFiles.some((file) => file.path === activeFilePath)
       ? activeFilePath
       : null;
 
-  const applyRecord = useCallback(
-    (nextRecord: ReviewRecord) => {
-      setRecord(nextRecord);
-      document.title = reviewDisplayTitle(nextRecord);
-      hydrateReview(nextRecord.feedback?.comments ?? [], nextRecord.resolution ?? null);
-    },
-    [hydrateReview]
-  );
+  const applyRecord = useCallback((nextRecord: ReviewRecord) => {
+    setRecord(nextRecord);
+    document.title = reviewDisplayTitle(nextRecord);
+  }, []);
+
+  const resetTurnView = useCallback(() => {
+    setCommitView({ mode: 'all' });
+    dispatchRangeDiff({ type: 'idle' });
+    setDraft(null);
+  }, [setDraft]);
 
   const reloadReview = useCallback(async () => {
     const nextRecord = await fetchReview(reviewId);
+    const nextLatestTurnId = nextRecord.turns[nextRecord.turns.length - 1]?.id ?? null;
+    if (selectedTurnId === null && latestTurnId && nextLatestTurnId !== latestTurnId) {
+      resetTurnView();
+    }
     applyRecord(nextRecord);
-  }, [reviewId, applyRecord]);
+  }, [reviewId, selectedTurnId, latestTurnId, resetTurnView, applyRecord]);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,13 +234,25 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   }, [reviewId, reset, applyRecord]);
 
   useEffect(() => {
-    if (!record || effectiveCommitView.mode !== 'range') {
+    if (!selectedTurn) {
+      return;
+    }
+    hydrateReview(selectedTurn.feedback?.comments ?? [], selectedTurn.resolution ?? null);
+  }, [hydrateReview, selectedTurn]);
+
+  useEffect(() => {
+    if (!selectedTurn || effectiveCommitView.mode !== 'range') {
       return;
     }
 
     let cancelled = false;
     dispatchRangeDiff({ type: 'loading' });
-    fetchCommitRangeDiff(reviewId, effectiveCommitView.fromSha, effectiveCommitView.toSha)
+    fetchCommitRangeDiff(
+      reviewId,
+      effectiveCommitView.fromSha,
+      effectiveCommitView.toSha,
+      selectedTurn.id
+    )
       .then((nextRangeDiff) => {
         if (!cancelled) {
           dispatchRangeDiff({ type: 'loaded', diff: nextRangeDiff });
@@ -205,13 +270,13 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [effectiveCommitView, record, reviewId]);
+  }, [effectiveCommitView, selectedTurn, reviewId]);
 
   useEffect(() => {
     const events = new EventSource(`/api/reviews/${reviewId}/events`);
     events.onmessage = (message) => {
       const event = parseJson(message.data, isReviewEvent, 'review event');
-      if (event.type === 'review.submitted' || event.type === 'review.updated') {
+      if (shouldReloadReviewForEvent(event)) {
         reloadReview().catch((reason) => {
           setError(reason instanceof Error ? reason.message : String(reason));
         });
@@ -234,7 +299,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     );
   }
 
-  if (!record || !activeDiff || !displayTitle) {
+  if (!record || !selectedTurn || !displayRecord || !activeDiff || !displayTitle) {
     return (
       <main className="empty-shell">
         <section className="empty-panel">
@@ -245,9 +310,14 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     );
   }
 
-  const scope = record.diff.scope;
+  const scope = selectedTurn.diff.scope;
   const stats = activeDiff.stats;
-  const readOnly = isResolvableReviewStatus(record.meta.status);
+  const titlePresentation = reviewTitlePresentation(displayRecord.meta.branch, displayTitle);
+  const branchPill = branchPillForTitle(displayRecord.meta.branch, displayTitle);
+  const submitReviewScope = reviewScopeForCommitView(effectiveCommitView);
+  const readOnly =
+    selectedTurn.id !== latestTurnId || isResolvableReviewStatus(selectedTurn.status);
+  const showTurnHistory = shouldShowTurnHistory(record.turns);
   const visibleRangeDiffError = effectiveCommitView.mode === 'range' ? rangeDiffState.error : null;
   const visibleRangeDiffLoading = effectiveCommitView.mode === 'range' && rangeDiffState.loading;
   const viewedCount = activeDiff.files.filter((file) => viewedFiles.has(file.path)).length;
@@ -291,18 +361,6 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
       selectedExtensionIds: new Set()
     }));
   };
-  const scrollToFile = (filePath: string) => {
-    const target = document.getElementById(fileCardElementId(filePath));
-    if (!target) {
-      return;
-    }
-    const headerOffset = 156;
-    const targetTop = target.getBoundingClientRect().top + window.scrollY - headerOffset;
-    window.scrollTo({
-      behavior: 'smooth',
-      top: Math.max(targetTop, 0)
-    });
-  };
   const selectFile = (filePath: string) => {
     setActiveFilePath(filePath);
     setFileTreeDrawerOpen(false);
@@ -328,52 +386,40 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     window.addEventListener('pointerup', onPointerUp, { once: true });
   };
   const handleViewedChange = (filePath: string, viewed: boolean) => {
-    setViewedFiles((current) => {
-      const next = new Set(current);
+    setViewedFilesState((current) => {
+      const currentFiles =
+        current.storageKey === viewedStorageKey ? current.files : loadViewedFiles(viewedStorageKey);
+      const next = new Set(currentFiles);
       viewed ? next.add(filePath) : next.delete(filePath);
-      saveViewedFiles(reviewId, next);
-      return next;
+      saveViewedFiles(viewedStorageKey, next);
+      return { storageKey: viewedStorageKey, files: next };
     });
   };
   const handleOpenFile = async (filePath: string) => {
     setOpenFileError(null);
     try {
-      await openReviewFile(reviewId, filePath);
+      await openReviewFile(reviewId, filePath, selectedTurn.id);
     } catch (reason) {
       setOpenFileError(reason instanceof Error ? reason.message : String(reason));
     }
   };
+  const fileTreeProps = {
+    activeFilePath: visibleActiveFilePath,
+    extensionBuckets,
+    files: activeDiff.files,
+    filteredFiles,
+    searchQuery,
+    selectedExtensionIds,
+    onClearExtensions: clearExtensions,
+    onFileSelect: selectFile,
+    onSearchChange: updateSearchQuery,
+    onSelectAllExtensions: selectAllExtensions,
+    onToggleExtension: toggleExtension
+  };
   const sidebarFileTree = (
-    <FileTree
-      activeFilePath={visibleActiveFilePath}
-      extensionBuckets={extensionBuckets}
-      files={activeDiff.files}
-      filteredFiles={filteredFiles}
-      searchQuery={searchQuery}
-      selectedExtensionIds={selectedExtensionIds}
-      onCollapse={() => setFileTreeCollapsed(true)}
-      onClearExtensions={clearExtensions}
-      onFileSelect={selectFile}
-      onSearchChange={updateSearchQuery}
-      onSelectAllExtensions={selectAllExtensions}
-      onToggleExtension={toggleExtension}
-    />
+    <FileTree {...fileTreeProps} onCollapse={() => setFileTreeCollapsed(true)} />
   );
-  const drawerFileTree = (
-    <FileTree
-      activeFilePath={visibleActiveFilePath}
-      extensionBuckets={extensionBuckets}
-      files={activeDiff.files}
-      filteredFiles={filteredFiles}
-      searchQuery={searchQuery}
-      selectedExtensionIds={selectedExtensionIds}
-      onClearExtensions={clearExtensions}
-      onFileSelect={selectFile}
-      onSearchChange={updateSearchQuery}
-      onSelectAllExtensions={selectAllExtensions}
-      onToggleExtension={toggleExtension}
-    />
-  );
+  const drawerFileTree = <FileTree {...fileTreeProps} />;
   const filteredEmptyState =
     activeDiff.files.length === 0 ? null : (
       <div className="empty-diff filtered-empty">
@@ -390,7 +436,12 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
             <img className="brand-mark" src="/logo.svg" alt="" />
             <div className="review-heading">
               <p className="product-name">Gloss</p>
-              <h1>{displayTitle}</h1>
+              <h1>
+                {titlePresentation.icon === 'branch' ? (
+                  <GitBranch className="review-title-icon" size={18} />
+                ) : null}
+                <span className="review-title-text">{displayTitle}</span>
+              </h1>
             </div>
           </div>
           <div className="topbar-actions">
@@ -432,37 +483,32 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
             >
               {wrapLines ? <MoveHorizontal size={16} /> : <WrapText size={16} />}
             </button>
-            <div className="branch-pill" title={record.meta.branch ?? 'Detached HEAD'}>
-              <GitBranch size={16} />
-              <span>{record.meta.branch ?? 'detached'}</span>
-            </div>
+            {branchPill ? (
+              <div className="branch-pill" title={branchPill.title}>
+                <GitBranch size={16} />
+                <span>{branchPill.label}</span>
+              </div>
+            ) : null}
           </div>
         </div>
-        <div className="review-summary">
-          <ReviewRefSummary label="Base" refName={scope.base.ref} sha={scope.base.sha} />
-          <ReviewRefSummary
-            label="Compare"
-            refName={scope.comparison.ref}
-            sha={scope.comparison.sha}
-          />
-          <div className="review-summary-card review-summary-stats">
-            <span className="review-summary-label">Changes</span>
-            <span className="review-summary-main">
-              <span>
-                {stats.files} {stats.files === 1 ? 'file' : 'files'}
-              </span>
-              <span className="summary-add">+{stats.additions}</span>
-              <span className="summary-del">-{stats.deletions}</span>
-            </span>
-          </div>
-        </div>
+        <ReviewContextBar
+          scope={scope}
+          selectedTurn={selectedTurn}
+          stats={stats}
+          turns={record.turns}
+          onSelectTurn={(turnId) => {
+            if (turnId !== selectedTurn.id) {
+              resetTurnView();
+            }
+            setSelectedTurnId(turnId === latestTurnId ? null : turnId);
+          }}
+        />
       </header>
       {openFileError ? <div className="open-file-message error">{openFileError}</div> : null}
       {visibleRangeDiffError ? (
         <div className="open-file-message error">{visibleRangeDiffError}</div>
       ) : null}
       {visibleRangeDiffLoading ? <div className="range-loading">Loading range diff</div> : null}
-      {readOnly ? <ReviewStateBanner record={record} /> : null}
       <div
         className={`review-body ${fileTreeCollapsed ? 'file-tree-collapsed' : ''}`}
         style={{ '--file-tree-width': `${fileTreeWidth}px` } as CSSProperties}
@@ -494,12 +540,13 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
           )}
         </aside>
         <section className="review-diff-column">
+          {readOnly && !showTurnHistory ? <ReviewStateBanner record={displayRecord} /> : null}
           <DiffView
             activeFilePath={visibleActiveFilePath}
             diff={activeDiff}
             emptyState={filteredEmptyState}
             files={filteredFiles}
-            record={record}
+            record={displayRecord}
             readOnly={readOnly}
             viewedFiles={viewedFiles}
             wrapLines={wrapLines}
@@ -526,29 +573,193 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
           </aside>
         </dialog>
       ) : null}
-      {readOnly ? null : <SubmitBar reviewId={reviewId} onSubmitted={reloadReview} />}
+      {readOnly ? null : (
+        <SubmitBar reviewId={reviewId} reviewScope={submitReviewScope} onSubmitted={reloadReview} />
+      )}
     </main>
   );
 }
 
-function ReviewRefSummary({
-  label,
-  refName,
-  sha
+function recordForTurn(record: ReviewRecord, turn: ReviewTurn): ReviewRecord {
+  return {
+    ...record,
+    meta: {
+      ...record.meta,
+      activeTurnId: turn.id,
+      status: turn.status,
+      submittedAt: turn.submittedAt,
+      resolvedAt: turn.resolvedAt,
+      feedbackPath: turn.feedbackPath,
+      markdownPath: turn.markdownPath
+    },
+    diff: turn.diff,
+    ...(turn.feedback ? { feedback: turn.feedback } : { feedback: undefined }),
+    ...(turn.resolution ? { resolution: turn.resolution } : { resolution: undefined })
+  };
+}
+
+function ReviewContextBar({
+  scope,
+  selectedTurn,
+  stats,
+  turns,
+  onSelectTurn
 }: {
-  label: string;
-  refName: string;
-  sha: string | null;
+  scope: DiffPayload['scope'];
+  selectedTurn: ReviewTurn;
+  stats: DiffPayload['stats'];
+  turns: ReviewTurn[];
+  onSelectTurn: (turnId: string) => void;
 }) {
   return (
-    <div className="review-summary-card" title={`${label} ${refName}${sha ? ` (${sha})` : ''}`}>
-      <span className="review-summary-label">{label}</span>
-      <span className="review-summary-main">
-        <span className="review-summary-ref">{refName}</span>
-        {sha ? <span className="review-summary-sha">{sha.slice(0, 7)}</span> : null}
-      </span>
+    <div className="review-context-bar">
+      <div
+        className="review-context-range"
+        title={`${reviewRefTitle('Base', scope.base.ref, scope.base.sha)} to ${reviewRefTitle(
+          'Compare',
+          scope.comparison.ref,
+          scope.comparison.sha
+        )}`}
+      >
+        <span className="review-context-ref">{reviewRefText(scope.base.ref, scope.base.sha)}</span>
+        <ArrowRight className="review-context-arrow" size={14} />
+        <span className="review-context-ref">
+          {reviewRefText(scope.comparison.ref, scope.comparison.sha)}
+        </span>
+      </div>
+      <span className="review-context-divider" aria-hidden="true" />
+      <div className="review-context-stats" title="Changed files">
+        <span>
+          {stats.files} {stats.files === 1 ? 'file' : 'files'}
+        </span>
+        <span className="summary-add">+{stats.additions}</span>
+        <span className="summary-del">-{stats.deletions}</span>
+      </div>
+      <TurnSelector selectedTurn={selectedTurn} turns={turns} onSelect={onSelectTurn} />
     </div>
   );
+}
+
+function TurnSelector({
+  selectedTurn,
+  turns,
+  onSelect
+}: {
+  selectedTurn: ReviewTurn;
+  turns: ReviewTurn[];
+  onSelect: (turnId: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!shellRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', closeOnPointerDown);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeOnPointerDown);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isOpen]);
+
+  if (!shouldShowTurnHistory(turns)) {
+    return null;
+  }
+
+  const latestTurnId = turns[turns.length - 1]?.id;
+  const orderedTurns = [...turns].reverse();
+  return (
+    <div className="turn-selector" ref={shellRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        className="turn-selector-trigger"
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span>
+          Turn {selectedTurn.index} of {turns.length}
+        </span>
+        <span className={`turn-selector-status ${selectedTurn.status}`}>{selectedTurn.status}</span>
+        <ChevronDown size={14} />
+      </button>
+      {isOpen ? (
+        <div className="turn-menu" role="menu" aria-label="Review turns">
+          {orderedTurns.map((turn) => {
+            const counts = reviewResolutionCounts(turn);
+            const selected = turn.id === selectedTurn.id;
+            const latest = turn.id === latestTurnId;
+            const submittedScope = turn.feedback?.reviewScope
+              ? reviewScopeLabel(turn.feedback.reviewScope, turn.diff.commitDiffs ?? [])
+              : null;
+            const statusTimestamp = timestampForTurnStatus(turn);
+            return (
+              <button
+                aria-checked={selected}
+                className={`turn-menu-item ${selected ? 'selected' : ''}`}
+                key={turn.id}
+                role="menuitemradio"
+                type="button"
+                onClick={() => {
+                  onSelect(turn.id);
+                  setIsOpen(false);
+                }}
+              >
+                <span className="turn-menu-title">
+                  Turn {turn.index}
+                  {latest ? <span className="turn-menu-latest">Latest</span> : null}
+                </span>
+                <span className={`turn-menu-meta ${turn.status}`}>
+                  {turn.status}
+                  {counts.total > 0 ? ` · ${counts.open} open / ${counts.total}` : ' · no comments'}
+                </span>
+                {statusTimestamp ? (
+                  <time className="turn-menu-time" dateTime={statusTimestamp}>
+                    {formatTimestamp(statusTimestamp)}
+                  </time>
+                ) : null}
+                {submittedScope ? (
+                  <span className="turn-menu-scope">Scope: {submittedScope}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function reviewRefText(refName: string, sha: string | null): string {
+  return sha ? `${refName} ${sha.slice(0, 7)}` : refName;
+}
+
+function reviewRefTitle(label: string, refName: string, sha: string | null): string {
+  return `${label} ${refName}${sha ? ` (${sha})` : ''}`;
+}
+
+function timestampForTurnStatus(turn: ReviewTurn): string | null {
+  if (turn.status === 'resolved') {
+    return turn.resolvedAt ?? turn.resolution?.resolvedAt ?? null;
+  }
+  if (turn.status === 'submitted') {
+    return turn.submittedAt ?? null;
+  }
+  return null;
 }
 
 function commitViewForAvailableCommits(value: CommitView, commitDiffs: CommitDiff[]): CommitView {
@@ -920,6 +1131,16 @@ function commitViewFromSelectedIndexes(
   };
 }
 
+function reviewScopeForCommitView(value: CommitView): ReviewScope {
+  if (value.mode === 'all') {
+    return { mode: 'all' };
+  }
+  if (value.mode === 'single') {
+    return { mode: 'single', sha: value.sha };
+  }
+  return { mode: 'range', fromSha: value.fromSha, toSha: value.toSha };
+}
+
 function commitViewLabel(value: CommitView, options: CommitPickerOption[]): string {
   if (value.mode === 'all') {
     return 'All commits';
@@ -980,16 +1201,13 @@ function stateContent(record: ReviewRecord): { title: string; body: string } | n
   if (status === 'submitted') {
     return {
       title: counts.resolved > 0 && progress ? `Submitted · ${progress}` : 'Submitted',
-      body:
-        counts.resolved > 0
-          ? 'Feedback is being handled. Start a fresh Gloss review for the next diff.'
-          : 'Feedback has been submitted. Start a fresh Gloss review for the next diff.'
+      body: counts.resolved > 0 ? 'Feedback is being handled.' : 'Feedback has been submitted.'
     };
   }
   if (status === 'resolved') {
     return {
       title: progress ? `Resolved · ${progress}` : 'Resolved',
-      body: 'The agent marked this feedback loop resolved. Start a fresh Gloss review for new changes.'
+      body: 'This feedback turn is resolved.'
     };
   }
   return null;

@@ -5,6 +5,7 @@ import type {
   CommitRangeDiffRequest,
   CommitRangeDiffResponse,
   CreateReviewResponse,
+  CreateReviewTurnResponse,
   DiffCommit,
   DiffFile,
   DiffHunk,
@@ -24,6 +25,10 @@ import type {
   ReviewEvent,
   ReviewMeta,
   ReviewRecord,
+  ReviewScope,
+  ReviewTurn,
+  ReviewTurnMeta,
+  ReviewTurnSummary,
   ServerInfo,
   SubmitReviewRequest
 } from './types';
@@ -32,6 +37,7 @@ import {
   DIFF_LINE_TYPES,
   DIFF_SCOPE_MODES,
   RESOLUTION_STATUSES,
+  REVIEW_SCOPE_MODES,
   REVIEW_STATUSES,
   REVIEW_UPDATE_REASONS,
   SIDES
@@ -40,7 +46,15 @@ import {
 export type JsonGuard<T> = (value: unknown) => value is T;
 
 export type StoredReviewMeta = Omit<ReviewMeta, 'artifactDir'> &
-  Partial<Pick<ReviewMeta, 'artifactDir' | 'feedbackPath' | 'markdownPath'>>;
+  Partial<
+    Pick<ReviewMeta, 'artifactDir' | 'activeTurnId' | 'turns' | 'feedbackPath' | 'markdownPath'>
+  >;
+
+type ReviewRegistrationResponseShape = {
+  meta: ReviewMeta;
+  url: string;
+  turn?: ReviewTurnSummary;
+};
 
 export function parseJson<T>(raw: string, guard: JsonGuard<T>, label: string): T {
   const parsed: JsonValue = JSON.parse(raw);
@@ -75,7 +89,20 @@ export function isHealthResponse(value: unknown): value is HealthResponse {
 }
 
 export function isCreateReviewResponse(value: unknown): value is CreateReviewResponse {
-  return isRecord(value) && isReviewMeta(value.meta) && isString(value.url);
+  return (
+    isRecord(value) &&
+    hasReviewRegistrationFields(value) &&
+    isOptional(value.turn, isReviewTurnSummary)
+  );
+}
+
+export function isCreateReviewTurnResponse(value: unknown): value is CreateReviewTurnResponse {
+  return (
+    isRecord(value) &&
+    hasReviewRegistrationFields(value) &&
+    isReviewTurnSummary(value.turn) &&
+    isBoolean(value.reused)
+  );
 }
 
 export function isListReviewsResponse(value: unknown): value is ListReviewsResponse {
@@ -86,6 +113,8 @@ export function isOpenResult(value: unknown): value is OpenResult {
   return (
     isRecord(value) &&
     isString(value.reviewId) &&
+    isOptionalString(value.turnId) &&
+    isOptionalNumber(value.turnIndex) &&
     isString(value.url) &&
     isNumber(value.files) &&
     isOptionalNumber(value.comments) &&
@@ -96,7 +125,7 @@ export function isOpenResult(value: unknown): value is OpenResult {
 }
 
 export function isOpenFileRequest(value: unknown): value is OpenFileRequest {
-  return isRecord(value) && isString(value.filePath);
+  return isRecord(value) && isString(value.filePath) && isOptionalString(value.turnId);
 }
 
 export function isOpenFileResponse(value: unknown): value is OpenFileResponse {
@@ -104,7 +133,12 @@ export function isOpenFileResponse(value: unknown): value is OpenFileResponse {
 }
 
 export function isCommitRangeDiffRequest(value: unknown): value is CommitRangeDiffRequest {
-  return isRecord(value) && isString(value.fromSha) && isString(value.toSha);
+  return (
+    isRecord(value) &&
+    isString(value.fromSha) &&
+    isString(value.toSha) &&
+    isOptionalString(value.turnId)
+  );
 }
 
 export function isCommitRangeDiffResponse(value: unknown): value is CommitRangeDiffResponse {
@@ -123,6 +157,8 @@ export function isResolveResult(value: unknown): value is ResolveResult {
     isRecord(value) &&
     value.ok === true &&
     isString(value.reviewId) &&
+    isOptionalString(value.turnId) &&
+    isOptionalNumber(value.turnIndex) &&
     isReviewStatus(value.status) &&
     isResolutionStatus(value.resolutionStatus) &&
     isResolutionCounts(value.comments) &&
@@ -132,17 +168,22 @@ export function isResolveResult(value: unknown): value is ResolveResult {
 }
 
 export function isSubmitReviewRequest(value: unknown): value is SubmitReviewRequest {
-  return isRecord(value) && isArrayOf(value.comments, isComment);
+  return (
+    isRecord(value) &&
+    isArrayOf(value.comments, isComment) &&
+    isOptional(value.reviewScope, isReviewScope)
+  );
 }
 
 export function isResolutionRequest(value: unknown): value is ResolutionRequest {
-  return isRecord(value) && isOptionalString(value.summary);
+  return isRecord(value) && isOptionalString(value.summary) && isOptionalString(value.turn);
 }
 
 export function isReviewRecord(value: unknown): value is ReviewRecord {
   return (
     isRecord(value) &&
     isReviewMeta(value.meta) &&
+    isArrayOf(value.turns, isReviewTurn) &&
     isDiffPayload(value.diff) &&
     isOptional(value.feedback, isFeedbackBundle) &&
     isOptional(value.resolution, isResolutionBundle)
@@ -161,6 +202,10 @@ export function isStoredReviewMeta(value: unknown): value is StoredReviewMeta {
     isOptionalString(value.submittedAt) &&
     isOptionalString(value.resolvedAt) &&
     isOptionalString(value.artifactDir) &&
+    isOptionalString(value.activeTurnId) &&
+    isOptional(value.turns, (turns): turns is ReviewTurnSummary[] =>
+      isArrayOf(turns, isReviewTurnSummary)
+    ) &&
     isOptionalString(value.feedbackPath) &&
     isOptionalString(value.markdownPath)
   );
@@ -168,6 +213,12 @@ export function isStoredReviewMeta(value: unknown): value is StoredReviewMeta {
 
 function isReviewMeta(value: unknown): value is ReviewMeta {
   return isStoredReviewMeta(value) && isString(value.artifactDir);
+}
+
+function hasReviewRegistrationFields(
+  value: Record<string, unknown>
+): value is Record<string, unknown> & ReviewRegistrationResponseShape {
+  return isReviewMeta(value.meta) && isString(value.url);
 }
 
 export function isDiffPayload(value: unknown): value is DiffPayload {
@@ -192,9 +243,12 @@ export function isFeedbackBundle(value: unknown): value is FeedbackBundle {
     isRecord(value) &&
     value.version === 1 &&
     isString(value.reviewId) &&
+    isOptionalString(value.turnId) &&
+    isOptionalNumber(value.turnIndex) &&
     isString(value.timestamp) &&
     isBaseRef(value.base) &&
     isNullableString(value.branch) &&
+    isOptional(value.reviewScope, isReviewScope) &&
     isArrayOf(value.comments, isComment)
   );
 }
@@ -203,6 +257,8 @@ export function isResolutionBundle(value: unknown): value is ResolutionBundle {
   return (
     isRecord(value) &&
     isString(value.reviewId) &&
+    isOptionalString(value.turnId) &&
+    isOptionalNumber(value.turnIndex) &&
     isResolutionStatus(value.status) &&
     isNullableString(value.summary) &&
     isNullableString(value.resolvedAt) &&
@@ -218,12 +274,20 @@ export function isReviewEvent(value: unknown): value is ReviewEvent {
     case 'review.opened':
     case 'review.cancelled':
       return true;
+    case 'review.turn.created':
+      return isString(value.turnId) && isNumber(value.turnIndex) && isBoolean(value.reused);
     case 'review.submitted':
       return (
-        isRecord(value.counts) && isNumber(value.counts.files) && isNumber(value.counts.comments)
+        isOptionalString(value.turnId) &&
+        isOptionalNumber(value.turnIndex) &&
+        isRecord(value.counts) &&
+        isNumber(value.counts.files) &&
+        isNumber(value.counts.comments)
       );
     case 'review.updated':
       return (
+        isOptionalString(value.turnId) &&
+        isOptionalNumber(value.turnIndex) &&
         isReviewUpdateReason(value.reason) &&
         isReviewStatus(value.status) &&
         isResolutionStatus(value.resolutionStatus) &&
@@ -232,6 +296,43 @@ export function isReviewEvent(value: unknown): value is ReviewEvent {
     default:
       return false;
   }
+}
+
+export function isReviewTurnMeta(value: unknown): value is ReviewTurnMeta {
+  return (
+    isRecord(value) &&
+    isString(value.id) &&
+    isNumber(value.index) &&
+    isReviewStatus(value.status) &&
+    isString(value.createdAt) &&
+    isOptionalString(value.submittedAt) &&
+    isOptionalString(value.resolvedAt) &&
+    isString(value.artifactDir) &&
+    isString(value.diffPath) &&
+    isOptionalString(value.feedbackPath) &&
+    isOptionalString(value.markdownPath) &&
+    isOptionalString(value.resolvedPath)
+  );
+}
+
+function isReviewTurnSummary(value: unknown): value is ReviewTurnSummary {
+  if (!isRecord(value) || !isReviewTurnMeta(value)) {
+    return false;
+  }
+  return (
+    isString(value.capturedAt) && isDiffStats(value.stats) && isResolutionCounts(value.comments)
+  );
+}
+
+function isReviewTurn(value: unknown): value is ReviewTurn {
+  if (!isRecord(value) || !isReviewTurnMeta(value)) {
+    return false;
+  }
+  return (
+    isDiffPayload(value.diff) &&
+    isOptional(value.feedback, isFeedbackBundle) &&
+    isOptional(value.resolution, isResolutionBundle)
+  );
 }
 
 function isDiffScope(value: unknown): value is DiffPayload['scope'] {
@@ -283,6 +384,20 @@ function isCommitDiff(value: unknown): value is CommitDiff {
     isString(value.rawDiff) &&
     isArrayOf(value.files, isDiffFile)
   );
+}
+
+function isReviewScope(value: unknown): value is ReviewScope {
+  if (!isRecord(value) || !isOneOf(value.mode, REVIEW_SCOPE_MODES)) {
+    return false;
+  }
+  switch (value.mode) {
+    case 'all':
+      return true;
+    case 'single':
+      return isString(value.sha);
+    case 'range':
+      return isString(value.fromSha) && isString(value.toSha);
+  }
 }
 
 function isDiffFile(value: unknown): value is DiffFile {

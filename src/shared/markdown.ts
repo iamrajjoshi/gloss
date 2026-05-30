@@ -1,5 +1,6 @@
 import { compareCommentsByLocation, formatLineRange } from './comments';
 import { languageForPath } from './language';
+import { reviewScopeLabel } from './review-scope';
 import type { FeedbackBundle } from './types';
 
 function fenceFor(snippet: string): string {
@@ -35,6 +36,8 @@ export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
   const lines: string[] = [
     `# Gloss feedback - ${bundle.timestamp}`,
     `Review: ${bundle.reviewId}`,
+    ...(bundle.turnIndex ? [`Turn: ${bundle.turnIndex} (${bundle.turnId ?? 'unknown'})`] : []),
+    ...(bundle.reviewScope ? [`Review scope: ${reviewScopeLabel(bundle.reviewScope)}`] : []),
     `Base: ${bundle.base.ref} (${bundle.base.sha.slice(0, 7)})  Branch: ${bundle.branch ?? '(detached)'}`,
     `Files: ${files.length}   Comments: ${comments.length}`,
     ''

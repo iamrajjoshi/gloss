@@ -1,13 +1,18 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  globalReviewDiffFile,
+  globalReviewDir,
   globalReviewFeedbackFile,
   globalReviewMarkdownFile,
   globalReviewMetaFile,
-  globalReviewResolvedFile
+  globalReviewTurnFeedbackFile,
+  globalReviewTurnMarkdownFile,
+  globalReviewTurnMetaFile,
+  globalReviewTurnResolvedFile
 } from '../shared/paths';
 import { isResolutionBundle, parseJson } from '../shared/validation';
 import { makeComment, makeDiff } from '../test/factories';
@@ -44,15 +49,16 @@ describe('ReviewStore global persistence', () => {
     const {
       record: submitted,
       feedbackPath,
-      markdownPath
+      markdownPath,
+      turn
     } = await store.submit(record.meta.id, [makeComment()]);
 
     expect(submitted.meta.status).toBe('submitted');
     expect(submitted.meta.submittedAt).toBeTruthy();
     expect(submitted.meta.feedbackPath).toBe(feedbackPath);
     expect(submitted.meta.markdownPath).toBe(markdownPath);
-    expect(feedbackPath).toBe(globalReviewFeedbackFile(record.meta.id));
-    expect(markdownPath).toBe(globalReviewMarkdownFile(record.meta.id));
+    expect(feedbackPath).toBe(globalReviewTurnFeedbackFile(record.meta.id, turn.id));
+    expect(markdownPath).toBe(globalReviewTurnMarkdownFile(record.meta.id, turn.id));
     expect(existsSync(path.join(repoRoot, '.gloss'))).toBe(false);
 
     const reloaded = new ReviewStore();
@@ -73,7 +79,7 @@ describe('ReviewStore global persistence', () => {
       'review resolution'
     );
 
-    expect(resolvedPath).toBe(globalReviewResolvedFile(record.meta.id));
+    expect(resolvedPath).toBe(globalReviewTurnResolvedFile(record.meta.id, turn.id));
     expect(resolved?.meta.status).toBe('resolved');
     expect(resolved?.resolution).toEqual(resolvedPayload);
     expect(resolvedPayload).toMatchObject({
@@ -105,7 +111,7 @@ describe('ReviewStore global persistence', () => {
       status: 'submitted',
       resolutionStatus: 'partial',
       comments: { total: 2, resolved: 1, open: 1 },
-      path: globalReviewResolvedFile(record.meta.id)
+      path: expect.stringContaining('/turns/')
     });
     expect(partiallyResolved?.meta.status).toBe('submitted');
     expect(partiallyResolved?.feedback?.comments).toHaveLength(2);
@@ -138,6 +144,216 @@ describe('ReviewStore global persistence', () => {
     expect(reopenedRecord?.resolution?.comments.map((comment) => comment.commentId)).toEqual([
       'comment-2'
     ]);
+  });
+
+  it('appends, reuses, and reloads review turns', async () => {
+    const store = new ReviewStore();
+    const first = await store.create(makeStoreDiff());
+    const submitted = await store.submit(first.meta.id, [makeComment({ id: 'comment-1' })]);
+    const secondDiff = makeStoreDiff({
+      capturedAt: '2026-05-22T12:05:00.000Z',
+      code: 'export const second = true;',
+      filePath: 'second.ts'
+    });
+
+    const appended = await store.appendTurn(first.meta.id, secondDiff);
+    const retried = await store.appendTurn(first.meta.id, secondDiff);
+
+    expect(appended.reused).toBe(false);
+    expect(retried.reused).toBe(true);
+    expect(retried.turn.id).toBe(appended.turn.id);
+    expect(appended.record.meta.activeTurnId).toBe(appended.turn.id);
+    expect(appended.record.diff.files[0]?.path).toBe('second.ts');
+    expect(appended.record.turns.map((turn) => turn.index)).toEqual([1, 2]);
+    expect(appended.record.meta.turns?.map((turn) => turn.comments.total)).toEqual([1, 0]);
+    await expect(
+      store.appendTurn(
+        first.meta.id,
+        makeStoreDiff({ code: 'export const third = true;', filePath: 'third.ts' })
+      )
+    ).rejects.toThrow(/pending turn/);
+
+    const reloaded = new ReviewStore();
+    const loaded = await reloaded.get(first.meta.id);
+
+    expect(loaded?.turns).toHaveLength(2);
+    expect(loaded?.meta.activeTurnId).toBe(appended.turn.id);
+    expect(loaded?.meta.status).toBe('pending');
+
+    await reloaded.submit(first.meta.id, [
+      makeComment({ id: 'comment-2', filePath: 'second.ts', originalSnippet: 'second' })
+    ]);
+    const resolvedFirstTurnComment = await reloaded.resolveComment(first.meta.id, 'comment-1');
+
+    expect(submitted.turn.index).toBe(1);
+    expect(resolvedFirstTurnComment.turnIndex).toBe(1);
+  });
+
+  it('persists the submitted commit scope for a turn', async () => {
+    const store = new ReviewStore();
+    const diff = makeStoreDiffWithCommits();
+    const record = await store.create(diff);
+    const reviewScope = {
+      mode: 'range' as const,
+      fromSha: diff.commitDiffs?.[0]?.commit.sha ?? '',
+      toSha: diff.commitDiffs?.[1]?.commit.sha ?? ''
+    };
+
+    const submitted = await store.submit(record.meta.id, [makeComment()], reviewScope);
+    const reloaded = await new ReviewStore().get(record.meta.id);
+    const markdown = await readFile(submitted.markdownPath, 'utf8');
+
+    expect(submitted.record.feedback?.reviewScope).toEqual(reviewScope);
+    expect(reloaded?.feedback?.reviewScope).toEqual(reviewScope);
+    expect(markdown).toContain('Review scope: Commit range 1234567 to abcdef1');
+    await expect(
+      store.submit(record.meta.id, [makeComment()], {
+        mode: 'single',
+        sha: diff.commitDiffs?.[0]?.commit.sha ?? ''
+      })
+    ).rejects.toThrow(/cannot be submitted/);
+  });
+
+  it('recovers the latest valid turn when root metadata is stale or a turn is incomplete', async () => {
+    const store = new ReviewStore();
+    const first = await store.create(makeStoreDiff());
+    const submitted = await store.submit(first.meta.id, [makeComment({ id: 'comment-1' })]);
+    const appended = await store.appendTurn(
+      first.meta.id,
+      makeStoreDiff({ capturedAt: '2026-05-22T12:10:00.000Z', filePath: 'second.ts' })
+    );
+    const staleMeta = {
+      ...appended.record.meta,
+      activeTurnId: submitted.turn.id,
+      status: 'submitted',
+      turns: appended.record.meta.turns?.filter((turn) => turn.id === submitted.turn.id)
+    };
+    await writeFile(globalReviewMetaFile(first.meta.id), `${JSON.stringify(staleMeta, null, 2)}\n`);
+
+    const brokenTurnId = 'broken-turn';
+    await mkdir(path.dirname(globalReviewTurnMetaFile(first.meta.id, brokenTurnId)), {
+      recursive: true
+    });
+    await writeFile(
+      globalReviewTurnMetaFile(first.meta.id, brokenTurnId),
+      `${JSON.stringify({
+        id: brokenTurnId,
+        index: 99,
+        status: 'pending',
+        createdAt: '2026-05-22T12:11:00.000Z',
+        artifactDir: path.dirname(globalReviewTurnMetaFile(first.meta.id, brokenTurnId)),
+        diffPath: path.join(
+          path.dirname(globalReviewTurnMetaFile(first.meta.id, brokenTurnId)),
+          'diff.json'
+        )
+      })}\n`
+    );
+
+    const recovered = await new ReviewStore().get(first.meta.id);
+
+    expect(recovered?.turns).toHaveLength(2);
+    expect(recovered?.meta.activeTurnId).toBe(appended.turn.id);
+    expect(recovered?.meta.status).toBe('pending');
+    expect(recovered?.diff.files[0]?.path).toBe('second.ts');
+  });
+
+  it('preserves legacy root artifacts after a new persisted turn is appended', async () => {
+    const reviewId = 'legacy-review';
+    const legacyDiff = makeStoreDiff();
+    const legacyFeedback = {
+      version: 1 as const,
+      reviewId,
+      timestamp: '2026-05-22T12:01:00.000Z',
+      base: legacyDiff.base,
+      branch: legacyDiff.branch,
+      comments: [makeComment({ id: 'legacy-comment' })]
+    };
+    await mkdir(globalReviewDir(reviewId), { recursive: true });
+    await writeFile(
+      globalReviewMetaFile(reviewId),
+      `${JSON.stringify(
+        {
+          id: reviewId,
+          cwd: repoRoot,
+          base: legacyDiff.base,
+          branch: legacyDiff.branch,
+          status: 'submitted',
+          createdAt: legacyDiff.capturedAt,
+          submittedAt: legacyFeedback.timestamp,
+          artifactDir: globalReviewDir(reviewId),
+          feedbackPath: globalReviewFeedbackFile(reviewId),
+          markdownPath: globalReviewMarkdownFile(reviewId)
+        },
+        null,
+        2
+      )}\n`
+    );
+    await writeFile(globalReviewDiffFile(reviewId), `${JSON.stringify(legacyDiff, null, 2)}\n`);
+    await writeFile(
+      globalReviewFeedbackFile(reviewId),
+      `${JSON.stringify(legacyFeedback, null, 2)}\n`
+    );
+    await writeFile(globalReviewMarkdownFile(reviewId), '# legacy feedback\n');
+
+    const store = new ReviewStore();
+    const appended = await store.appendTurn(
+      reviewId,
+      makeStoreDiff({ capturedAt: '2026-05-22T12:05:00.000Z', filePath: 'second.ts' })
+    );
+    const recovered = await new ReviewStore().get(reviewId);
+
+    expect(appended.record.turns).toHaveLength(2);
+    expect(recovered?.turns).toHaveLength(2);
+    expect(recovered?.turns[0]?.feedback?.comments[0]?.id).toBe('legacy-comment');
+    expect(recovered?.turns[1]?.id).toBe(appended.turn.id);
+    expect(recovered?.meta.turns?.map((turn) => turn.comments.total)).toEqual([1, 0]);
+  });
+
+  it('recovers canonical artifact paths when turn metadata is stale', async () => {
+    const store = new ReviewStore();
+    const record = await store.create(makeStoreDiff());
+    const submitted = await store.submit(record.meta.id, [makeComment({ id: 'comment-1' })]);
+    const { turn } = submitted;
+    await writeFile(
+      globalReviewTurnMetaFile(record.meta.id, turn.id),
+      `${JSON.stringify(
+        {
+          id: turn.id,
+          index: turn.index,
+          status: 'pending',
+          createdAt: turn.createdAt,
+          artifactDir: turn.artifactDir,
+          diffPath: turn.diffPath
+        },
+        null,
+        2
+      )}\n`
+    );
+
+    const recovered = await new ReviewStore().get(record.meta.id);
+
+    expect(recovered?.meta.status).toBe('submitted');
+    expect(recovered?.meta.feedbackPath).toBe(
+      globalReviewTurnFeedbackFile(record.meta.id, turn.id)
+    );
+    expect(recovered?.meta.markdownPath).toBe(
+      globalReviewTurnMarkdownFile(record.meta.id, turn.id)
+    );
+    expect(recovered?.feedback?.comments[0]?.id).toBe('comment-1');
+  });
+
+  it('recovers a review when root metadata is missing but turn artifacts are valid', async () => {
+    const store = new ReviewStore();
+    const record = await store.create(makeStoreDiff());
+    await rm(globalReviewMetaFile(record.meta.id), { force: true });
+
+    const recovered = await new ReviewStore().get(record.meta.id);
+
+    expect(recovered?.meta.id).toBe(record.meta.id);
+    expect(recovered?.meta.activeTurnId).toBe(record.meta.activeTurnId);
+    expect(recovered?.meta.status).toBe('pending');
+    expect(recovered?.diff.files[0]?.path).toBe(record.diff.files[0]?.path);
+    expect(existsSync(globalReviewMetaFile(record.meta.id))).toBe(true);
   });
 
   it('rejects invalid comment IDs and pending review resolution', async () => {
@@ -184,6 +400,45 @@ describe('ReviewStore global persistence', () => {
   });
 });
 
-function makeStoreDiff() {
-  return makeDiff({ cwd: repoRoot, branch: 'raj--gloss--global-store' });
+function makeStoreDiff(options: { capturedAt?: string; code?: string; filePath?: string } = {}) {
+  return makeDiff({ cwd: repoRoot, branch: 'raj--gloss--global-store', ...options });
+}
+
+function makeStoreDiffWithCommits() {
+  const first = makeStoreDiff();
+  const second = makeStoreDiff({
+    code: 'export const second = true;',
+    filePath: 'second.ts'
+  });
+  first.commitDiffs = [
+    {
+      commit: {
+        sha: '1234567890abcdef1234567890abcdef12345678',
+        shortSha: '1234567',
+        subject: 'add api file',
+        authorName: 'Gloss Test',
+        authorEmail: 'gloss@example.com',
+        authoredAt: '2026-05-22T12:00:00.000Z',
+        committedAt: '2026-05-22T12:00:01.000Z'
+      },
+      stats: first.stats,
+      rawDiff: first.rawDiff,
+      files: first.files
+    },
+    {
+      commit: {
+        sha: 'abcdef1234567890abcdef1234567890abcdef12',
+        shortSha: 'abcdef1',
+        subject: 'add second file',
+        authorName: 'Gloss Test',
+        authorEmail: 'gloss@example.com',
+        authoredAt: '2026-05-22T12:01:00.000Z',
+        committedAt: '2026-05-22T12:01:01.000Z'
+      },
+      stats: second.stats,
+      rawDiff: second.rawDiff,
+      files: second.files
+    }
+  ];
+  return first;
 }

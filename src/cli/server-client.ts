@@ -2,6 +2,7 @@ import type { JsonValue } from '../shared/json';
 import type {
   Comment,
   CreateReviewResponse,
+  CreateReviewTurnResponse,
   DiffPayload,
   FeedbackBundle,
   HealthResponse,
@@ -15,6 +16,7 @@ import type {
 } from '../shared/types';
 import {
   isCreateReviewResponse,
+  isCreateReviewTurnResponse,
   isFeedbackBundle,
   isHealthResponse,
   isListReviewsResponse,
@@ -38,6 +40,15 @@ export class ServerClient {
     return this.post('/api/reviews', diff, isCreateReviewResponse, 'create review response');
   }
 
+  async appendReviewTurn(reviewId: string, diff: DiffPayload): Promise<CreateReviewTurnResponse> {
+    return this.post(
+      `/api/reviews/${reviewId}/turns`,
+      diff,
+      isCreateReviewTurnResponse,
+      'create review turn response'
+    );
+  }
+
   async getReview(reviewId: string): Promise<ReviewRecord> {
     return this.get(`/api/reviews/${reviewId}`, isReviewRecord, 'review response');
   }
@@ -50,8 +61,8 @@ export class ServerClient {
     return this.get(`/api/reviews/${reviewId}/feedback`, isFeedbackBundle, 'feedback response');
   }
 
-  async markResolved(reviewId: string, summary?: string): Promise<ResolveResult> {
-    const request: ResolutionRequest = { summary };
+  async markResolved(reviewId: string, summary?: string, turn?: string): Promise<ResolveResult> {
+    const request: ResolutionRequest = { summary, turn };
     return this.post(
       `/api/reviews/${reviewId}/resolved`,
       request,

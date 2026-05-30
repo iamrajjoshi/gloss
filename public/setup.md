@@ -5,7 +5,7 @@ coding-agent loops.
 
 Gloss captures the current git diff, opens a localhost browser review UI, lets
 the user attach comments to changed lines and ranges, then writes structured
-feedback to `~/.gloss/reviews/<reviewId>/feedback.json` and `feedback.md`.
+feedback under `~/.gloss/reviews/<reviewId>/turns/<turnId>/`.
 
 ## Check Installation
 
@@ -53,12 +53,16 @@ The skill pairs the CLI with the browser app:
 1. Run `gloss open --json` from the repo root unless the user names a base ref.
 2. Wait for the browser review to be submitted.
 3. Read `feedbackPath` from the JSON output.
-4. Address each comment in file and line order.
-5. Validate the fix with the narrowest relevant checks.
-6. Optionally mark individual comments handled with
+4. Check `feedback.reviewScope`; scoped feedback means the human submitted while
+   viewing one commit or commit range, not necessarily the whole turn.
+5. Address each comment in file and line order.
+6. Validate the fix with the narrowest relevant checks.
+7. Optionally mark individual comments handled with
    `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`.
-7. Run `gloss resolve <reviewId> --summary "<what changed>"`, then summarize
+8. Run `gloss resolve <reviewId> --summary "<what changed>"`, then summarize
    what changed.
+9. For another pass on the same review, run
+   `gloss open --review <reviewId> --json`.
 
 Browser review shortcuts:
 
@@ -165,6 +169,12 @@ Open a review and return immediately:
 gloss open --json --no-watch
 ```
 
+Continue an existing review with another turn:
+
+```bash
+gloss open --review <reviewId> --json
+```
+
 `gloss open --json` intentionally waits until browser submission or timeout.
 Use `--no-watch` when the caller only needs to open the review. The background
 daemon exits automatically after a short idle window with no pending reviews.
@@ -183,10 +193,10 @@ Mark one submitted comment handled:
 gloss resolve <reviewId> --comment <commentId> --summary "Applied this comment"
 ```
 
-For a follow-up pass after fixes or new commits, start a fresh session:
+For a follow-up pass after fixes or new commits in the same review loop:
 
 ```bash
-gloss open --json
+gloss open --review <reviewId> --json
 ```
 
 Diagnose setup:
