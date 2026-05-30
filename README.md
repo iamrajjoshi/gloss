@@ -9,6 +9,23 @@ git diff, opens a localhost review UI, lets you attach comments to changed
 lines or ranges, and writes structured feedback under `~/.gloss` for an agent
 to re-ingest.
 
+## Demo
+
+<video
+  src="public/gloss-demo.mp4"
+  poster="public/gloss-demo-poster.jpg"
+  controls
+>
+  <track
+    default
+    kind="captions"
+    label="English"
+    src="public/gloss-demo-captions.vtt"
+    srclang="en"
+  />
+  Watch the Gloss demo video in `public/gloss-demo.mp4`.
+</video>
+
 ## Install
 
 ```bash
