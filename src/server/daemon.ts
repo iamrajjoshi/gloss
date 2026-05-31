@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server';
 import { globalServerFile, globalStateDir, packageVersion } from '../shared/paths';
 import { readServerInfo, writeServerInfo } from '../shared/server-info';
 import { createApp } from './index';
+import { runStartupCleanup } from './maintenance';
 import { reviewStore } from './store';
 
 const port = Number(process.env.GLOSS_PORT ?? '0');
@@ -40,6 +41,7 @@ await writeServerInfo({
   stateDir: globalStateDir()
 });
 
+await runStartupCleanup();
 await scheduleIdleShutdown();
 
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {

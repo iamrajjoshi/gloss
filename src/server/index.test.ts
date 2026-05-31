@@ -1,16 +1,19 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue } from '../shared/json';
 import {
   globalReviewDir,
+  globalReviewMetaFile,
   globalReviewTurnFeedbackFile,
+  globalReviewTurnMetaFile,
   globalReviewTurnResolvedFile
 } from '../shared/paths';
 import type { ReviewEvent } from '../shared/types';
 import {
+  isClearReviewsResult,
   isCommitRangeDiffResponse,
   isCreateReviewResponse,
   isCreateReviewTurnResponse,
@@ -147,6 +150,61 @@ describe('Gloss review API global persistence', () => {
     });
 
     expect(resolvedSubmitResponse.status).toBe(200);
+  });
+
+  it('clears old completed reviews through the server and evicts them from memory', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment()] })
+    });
+    const hydratedResponse = await app.request(`/api/reviews/${created.meta.id}`);
+    const hydrated = await responseJson(hydratedResponse, isReviewRecord, 'review response');
+    await writeFile(
+      globalReviewMetaFile(created.meta.id),
+      `${JSON.stringify(
+        {
+          ...hydrated.meta,
+          createdAt: '2000-01-01T00:00:00.000Z',
+          submittedAt: '2000-01-02T00:00:00.000Z',
+          turns: hydrated.meta.turns?.map((turn) => ({
+            ...turn,
+            createdAt: '2000-01-01T00:00:00.000Z',
+            submittedAt: '2000-01-02T00:00:00.000Z',
+            capturedAt: '2000-01-02T00:00:00.000Z'
+          }))
+        },
+        null,
+        2
+      )}\n`
+    );
+    await agePersistedTurn(created.meta.id, created.turn?.id ?? '');
+
+    const clearResponse = await app.request('/api/maintenance/clear-reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ olderThanDays: 30 })
+    });
+    const result = await responseJson(clearResponse, isClearReviewsResult, 'clear reviews result');
+    const listResponse = await app.request('/api/reviews');
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
+
+    expect(clearResponse.status).toBe(200);
+    expect(result.deleted.map((review) => review.reviewId)).toEqual([created.meta.id]);
+    expect(list.reviews).toEqual([]);
+    expect(existsSync(globalReviewDir(created.meta.id))).toBe(false);
   });
 
   it('persists submitted feedback scope from the UI commit selection', async () => {
@@ -779,6 +837,28 @@ function makeApiDiff(options: { code?: string; filePath?: string } = {}) {
     cwd: repoRoot,
     filePath: options.filePath ?? 'api.ts'
   });
+}
+
+async function agePersistedTurn(reviewId: string, turnId: string): Promise<void> {
+  if (!turnId) {
+    throw new Error('missing turn id');
+  }
+  const turnPath = globalReviewTurnMetaFile(reviewId, turnId);
+  const turn = JSON.parse(await readFile(turnPath, 'utf8'));
+  await writeFile(
+    turnPath,
+    `${JSON.stringify(
+      {
+        ...turn,
+        status: 'submitted',
+        createdAt: '2000-01-01T00:00:00.000Z',
+        submittedAt: '2000-01-02T00:00:00.000Z',
+        resolvedAt: undefined
+      },
+      null,
+      2
+    )}\n`
+  );
 }
 
 function makeApiDiffWithCommits() {

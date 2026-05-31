@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ulid } from 'ulid';
+import { type ClearReviewArtifactsOptions, clearReviewArtifacts } from '../shared/cleanup';
 import { compareCommentsByLocation, countCommentFiles, resolutionCounts } from '../shared/comments';
 import { formatError, isFileNotFound } from '../shared/errors';
 import { writeJsonFile, writeTextFile } from '../shared/json';
@@ -27,6 +28,7 @@ import {
 import { normalizeReviewScope, sameReviewScope } from '../shared/review-scope';
 import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
+  ClearReviewsResult,
   Comment,
   DiffPayload,
   FeedbackBundle,
@@ -143,6 +145,18 @@ export class ReviewStore {
     return Array.from(this.reviews.values())
       .map((record) => record.meta)
       .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async clearReviewArtifacts(
+    options: ClearReviewArtifactsOptions = {}
+  ): Promise<ClearReviewsResult> {
+    const result = await clearReviewArtifacts(options);
+    if (!result.dryRun) {
+      for (const review of result.deleted) {
+        this.reviews.delete(review.reviewId);
+      }
+    }
+    return result;
   }
 
   async get(id: string): Promise<ReviewRecord | null> {

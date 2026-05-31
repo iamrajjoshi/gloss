@@ -180,6 +180,9 @@ Use `--no-watch` when the caller only needs to open the review. The background
 daemon exits automatically after a short idle window with no pending reviews.
 If cleanup looks stale, run `gloss doctor`; use `gloss stop --all` when you
 want to terminate all Gloss daemon processes for the current user.
+Use `gloss clear --dry-run` to preview old completed review artifacts, and
+`gloss clear` to delete completed artifacts older than 30 days. Pending reviews
+are always preserved.
 
 Mark a submitted review handled after applying feedback:
 

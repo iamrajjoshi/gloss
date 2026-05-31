@@ -11,6 +11,7 @@ import type { JsonValue } from '../shared/json';
 import { packageVersion } from '../shared/paths';
 import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
+  ClearReviewsRequest,
   CommitRangeDiffResponse,
   CreateReviewResponse,
   CreateReviewTurnResponse,
@@ -25,6 +26,7 @@ import type {
   SubmitReviewRequest
 } from '../shared/types';
 import {
+  isClearReviewsRequest,
   isCommitRangeDiffRequest,
   isDiffPayload,
   isOpenFileRequest,
@@ -71,6 +73,16 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
   app.get('/api/reviews', async (c) => {
     const response: ListReviewsResponse = { reviews: await reviewStore.list() };
     return c.json(response);
+  });
+
+  app.post('/api/maintenance/clear-reviews', async (c) => {
+    const parsed = await readJsonBody(c, isClearReviewsRequest, 'clear reviews request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const body: ClearReviewsRequest = parsed.body;
+    const result = await reviewStore.clearReviewArtifacts(body);
+    return c.json(result);
   });
 
   app.post('/api/reviews', async (c) => {

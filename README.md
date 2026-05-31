@@ -109,6 +109,11 @@ The background server exits automatically after a short idle window with no
 pending reviews. `gloss doctor` reports unmanaged daemon processes, and
 `gloss stop --all` cleans them up.
 
+`gloss clear` deletes completed review artifacts older than 30 days from
+`~/.gloss/reviews` while always preserving pending reviews. Use
+`gloss clear --dry-run` to preview candidates, or `--older-than <days>` to
+choose a different retention window.
+
 ## Review UI
 
 In the browser review, drag over a changed line or range to open a draft
