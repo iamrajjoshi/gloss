@@ -4,6 +4,11 @@
 
 # Gloss
 
+[![Release](https://img.shields.io/github/v/release/iamrajjoshi/gloss?display_name=tag&sort=semver)](https://github.com/iamrajjoshi/gloss/releases)
+[![npm](https://img.shields.io/npm/v/getgloss?color=cb3837)](https://www.npmjs.com/package/getgloss)
+[![CI](https://github.com/iamrajjoshi/gloss/actions/workflows/ci.yml/badge.svg)](https://github.com/iamrajjoshi/gloss/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/iamrajjoshi/gloss)](https://github.com/iamrajjoshi/gloss/blob/main/LICENSE)
+
 Gloss is a local browser review loop for coding agents. It captures your current
 git diff, opens a localhost review UI, lets you attach comments to changed
 lines or ranges, and writes structured feedback under `~/.gloss` for an agent
@@ -11,20 +16,9 @@ to re-ingest.
 
 ## Demo
 
-<video
-  src="public/gloss-demo.mp4"
-  poster="public/gloss-demo-poster.jpg"
-  controls
->
-  <track
-    default
-    kind="captions"
-    label="English"
-    src="public/gloss-demo-captions.vtt"
-    srclang="en"
-  />
-  Watch the Gloss demo video in `public/gloss-demo.mp4`.
-</video>
+[![Gloss demo video](public/gloss-demo-poster.jpg)](public/gloss-demo.mp4)
+
+[Watch the Gloss demo video](public/gloss-demo.mp4).
 
 ## Install
 
