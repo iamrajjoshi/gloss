@@ -1,5 +1,8 @@
 import type { JsonValue } from './json';
 import type {
+  ClearReviewEntry,
+  ClearReviewsRequest,
+  ClearReviewsResult,
   Comment,
   CommitDiff,
   CommitRangeDiffRequest,
@@ -85,6 +88,31 @@ export function isHealthResponse(value: unknown): value is HealthResponse {
     isBoolean(value.ok) &&
     isString(value.version) &&
     isNumber(value.activeReviews)
+  );
+}
+
+export function isClearReviewsRequest(value: unknown): value is ClearReviewsRequest {
+  return (
+    isRecord(value) &&
+    isOptionalNonNegativeInteger(value.olderThanDays) &&
+    isOptionalBoolean(value.dryRun)
+  );
+}
+
+export function isClearReviewsResult(value: unknown): value is ClearReviewsResult {
+  return (
+    isRecord(value) &&
+    isString(value.reviewsDir) &&
+    isString(value.cutoff) &&
+    isNumber(value.olderThanDays) &&
+    isBoolean(value.dryRun) &&
+    isArrayOf(value.candidates, isClearReviewEntry) &&
+    isArrayOf(value.deleted, isClearReviewEntry) &&
+    isArrayOf(value.skipped, isClearReviewSkipped) &&
+    isRecord(value.counts) &&
+    isNumber(value.counts.candidates) &&
+    isNumber(value.counts.deleted) &&
+    isNumber(value.counts.skipped)
   );
 }
 
@@ -335,6 +363,25 @@ function isReviewTurn(value: unknown): value is ReviewTurn {
   );
 }
 
+function isClearReviewEntry(value: unknown): value is ClearReviewEntry {
+  return (
+    isRecord(value) &&
+    isString(value.reviewId) &&
+    isReviewStatus(value.status) &&
+    isString(value.artifactDir) &&
+    isString(value.lastActivityAt)
+  );
+}
+
+function isClearReviewSkipped(value: unknown): value is ClearReviewsResult['skipped'][number] {
+  return (
+    isRecord(value) &&
+    isString(value.reviewId) &&
+    isString(value.artifactDir) &&
+    isString(value.reason)
+  );
+}
+
 function isDiffScope(value: unknown): value is DiffPayload['scope'] {
   return (
     isRecord(value) &&
@@ -512,6 +559,14 @@ function isNumber(value: unknown): value is number {
 
 function isOptionalNumber(value: unknown): value is number | undefined {
   return value === undefined || isNumber(value);
+}
+
+function isOptionalNonNegativeInteger(value: unknown): value is number | undefined {
+  return value === undefined || (isNumber(value) && Number.isInteger(value) && value >= 0);
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || isBoolean(value);
 }
 
 function isNullableNumber(value: unknown): value is number | null {

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import openBrowser from 'open';
+import { clearReviewArtifacts, DEFAULT_REVIEW_RETENTION_DAYS } from '../shared/cleanup';
 import { packageVersion } from '../shared/paths';
 import type {
+  ClearReviewsResult,
   DiffPayload,
   FeedbackBundle,
   ResolveResult,
@@ -35,6 +37,7 @@ type CliJsonOutput =
   | ReviewEvent
   | ResolveResult
   | { stopped: boolean; info: ServerInfo | null; stoppedPids?: number[] }
+  | ClearReviewsResult
   | {
       reviewId: string;
       turnId?: string;
@@ -263,6 +266,25 @@ program
   });
 
 program
+  .command('clear')
+  .description('Delete old completed review artifacts')
+  .option(
+    '--older-than <days>',
+    'delete completed reviews older than this many days',
+    parseOlderThanDays,
+    DEFAULT_REVIEW_RETENTION_DAYS
+  )
+  .option('--dry-run', 'print cleanup candidates without deleting them')
+  .action(async (options: { olderThan: number; dryRun?: boolean }) => {
+    const globals = program.opts<GlobalOptions>();
+    const result = await clearReviews({
+      olderThanDays: options.olderThan,
+      dryRun: options.dryRun === true
+    });
+    globals.json ? printJson(result) : printPlain(formatClearResult(result));
+  });
+
+program
   .command('resolve')
   .argument('<reviewId>', 'review id')
   .description('Mark a submitted review or one feedback comment as resolved')
@@ -401,6 +423,35 @@ async function baseForExistingReview(
   return record.diff.scope.mode === 'explicit'
     ? (record.diff.scope.requestedBase ?? record.diff.base.ref)
     : null;
+}
+
+async function clearReviews(options: {
+  olderThanDays: number;
+  dryRun: boolean;
+}): Promise<ClearReviewsResult> {
+  const info = await readServerInfo();
+  if (info && (await isServerResponsive(info))) {
+    return new ServerClient(serverUrl(info)).clearReviews(options);
+  }
+  return clearReviewArtifacts(options);
+}
+
+function parseOlderThanDays(value: string): number {
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 0) {
+    throw new Error('--older-than must be a non-negative integer');
+  }
+  return days;
+}
+
+function formatClearResult(result: ClearReviewsResult): string {
+  const action = result.dryRun ? 'Would delete' : 'Deleted';
+  const count = result.dryRun ? result.counts.candidates : result.counts.deleted;
+  const skipped =
+    result.counts.skipped > 0
+      ? `; skipped ${result.counts.skipped} invalid review artifact(s)`
+      : '';
+  return `${action} ${count} review artifact(s) older than ${result.olderThanDays} day(s) from ${result.reviewsDir}${skipped}`;
 }
 
 function isWatchTimeout(error: unknown): error is Error {

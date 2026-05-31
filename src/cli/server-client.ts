@@ -1,5 +1,7 @@
 import type { JsonValue } from '../shared/json';
 import type {
+  ClearReviewsRequest,
+  ClearReviewsResult,
   Comment,
   CreateReviewResponse,
   CreateReviewTurnResponse,
@@ -15,6 +17,7 @@ import type {
   SubmitReviewRequest
 } from '../shared/types';
 import {
+  isClearReviewsResult,
   isCreateReviewResponse,
   isCreateReviewTurnResponse,
   isFeedbackBundle,
@@ -55,6 +58,15 @@ export class ServerClient {
 
   async listReviews(): Promise<ListReviewsResponse> {
     return this.get('/api/reviews', isListReviewsResponse, 'review list response');
+  }
+
+  async clearReviews(request: ClearReviewsRequest): Promise<ClearReviewsResult> {
+    return this.post(
+      '/api/maintenance/clear-reviews',
+      request,
+      isClearReviewsResult,
+      'clear reviews response'
+    );
   }
 
   async getFeedback(reviewId: string): Promise<FeedbackBundle> {
@@ -174,7 +186,7 @@ export class ServerClient {
 
   private async post<T>(
     path: string,
-    body: DiffPayload | ResolutionRequest | SubmitReviewRequest,
+    body: ClearReviewsRequest | DiffPayload | ResolutionRequest | SubmitReviewRequest,
     guard: JsonGuard<T>,
     label: string
   ): Promise<T> {

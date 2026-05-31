@@ -6,6 +6,39 @@ export const REVIEW_STATUSES = ['pending', 'submitted', 'cancelled', 'resolved']
 
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
+export interface ClearReviewEntry {
+  reviewId: string;
+  status: ReviewStatus;
+  artifactDir: string;
+  lastActivityAt: string;
+}
+
+export interface ClearReviewSkipped {
+  reviewId: string;
+  artifactDir: string;
+  reason: string;
+}
+
+export interface ClearReviewsRequest {
+  olderThanDays?: number;
+  dryRun?: boolean;
+}
+
+export interface ClearReviewsResult {
+  reviewsDir: string;
+  cutoff: string;
+  olderThanDays: number;
+  dryRun: boolean;
+  candidates: ClearReviewEntry[];
+  deleted: ClearReviewEntry[];
+  skipped: ClearReviewSkipped[];
+  counts: {
+    candidates: number;
+    deleted: number;
+    skipped: number;
+  };
+}
+
 export interface Comment {
   id: string;
   filePath: string;
