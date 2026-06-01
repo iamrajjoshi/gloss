@@ -288,13 +288,14 @@ pre {
 
 .topbar-title {
   display: flex;
-  flex: 0 1 260px;
-  min-width: 220px;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: flex-start;
   gap: 14px;
 }
 
 .review-heading {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -497,7 +498,7 @@ pre {
 .topbar-actions {
   display: flex;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
