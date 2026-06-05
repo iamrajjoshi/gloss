@@ -103,6 +103,14 @@ The background server exits automatically after a short idle window with no
 pending reviews. `gloss doctor` reports unmanaged daemon processes, and
 `gloss stop --all` cleans them up.
 
+You do not need to unlock `~/.gloss/server.json` after finishing a review.
+That file is only the background daemon pointer, not a review lock. If a
+command reports a permission error while cleaning it up, run `gloss doctor`,
+then try `gloss stop --all` from a normal terminal. If macOS flags made the
+file immutable, inspect with `ls -lOe ~/.gloss ~/.gloss/server.json` and clear
+the flag with `chflags nouchg ~/.gloss/server.json`. For sandboxed agents, set
+`GLOSS_STATE_DIR` to a writable directory.
+
 `gloss clear` deletes completed review artifacts older than 30 days from
 `~/.gloss/reviews` while always preserving pending reviews. Use
 `gloss clear --dry-run` to preview candidates, or `--older-than <days>` to

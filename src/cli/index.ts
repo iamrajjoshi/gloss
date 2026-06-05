@@ -1,8 +1,14 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { access, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { Command } from 'commander';
 import openBrowser from 'open';
 import { clearReviewArtifacts, DEFAULT_REVIEW_RETENTION_DAYS } from '../shared/cleanup';
-import { packageVersion } from '../shared/paths';
+import { formatError, isFileNotFound } from '../shared/errors';
+import { ensureDir, globalServerFile, globalStateDir, packageVersion } from '../shared/paths';
+import { serverInfoPermissionMessage } from '../shared/server-info';
 import type {
   ClearReviewsResult,
   DiffPayload,
@@ -18,6 +24,7 @@ import {
   isServerResponsive,
   listGlossDaemonPids,
   readServerInfo,
+  type StopServerResult,
   serverUrl,
   startServer,
   stopServer
@@ -36,7 +43,7 @@ type CliJsonOutput =
   | ServerInfo
   | ReviewEvent
   | ResolveResult
-  | { stopped: boolean; info: ServerInfo | null; stoppedPids?: number[] }
+  | StopServerResult
   | ClearReviewsResult
   | {
       reviewId: string;
@@ -254,15 +261,7 @@ program
   .action(async (options: { all?: boolean }) => {
     const globals = program.opts<GlobalOptions>();
     const result = await stopServer({ all: options.all });
-    globals.json
-      ? printJson(result)
-      : printPlain(
-          options.all && result.stoppedPids
-            ? `Stopped ${result.stoppedPids.length} Gloss daemon(s)`
-            : result.stopped
-              ? 'Gloss server stopped'
-              : 'Gloss server was not running'
-        );
+    globals.json ? printJson(result) : printPlain(formatStopResult(result, options.all === true));
   });
 
 program
@@ -342,11 +341,23 @@ program
         detail: error instanceof Error ? error.message : String(error)
       });
     }
-    const info = await readServerInfo();
+    checks.push(await checkStateDirAccess());
+    checks.push(await checkServerInfoAccess());
+    let info: ServerInfo | null = null;
+    let serverStateError: unknown = null;
+    try {
+      info = await readServerInfo();
+    } catch (error) {
+      serverStateError = error;
+    }
     checks.push({
       name: 'server',
       ok: info ? await isServerResponsive(info) : false,
-      detail: info ? serverUrl(info) : 'not started'
+      detail: info
+        ? serverUrl(info)
+        : serverStateError
+          ? formatError(serverStateError)
+          : 'not started'
     });
     try {
       const daemonPids = await listGlossDaemonPids();
@@ -413,6 +424,56 @@ async function watchReviewWithReconnect(
       info = nextInfo;
     }
   }
+}
+
+function formatStopResult(result: StopServerResult, all: boolean): string {
+  const status =
+    all && result.stoppedPids
+      ? `Stopped ${result.stoppedPids.length} Gloss daemon(s)`
+      : result.stopped
+        ? 'Gloss server stopped'
+        : 'Gloss server was not running';
+  return result.warning ? `${status}\nWarning: ${result.warning}` : status;
+}
+
+async function checkStateDirAccess(): Promise<DoctorCheck> {
+  const probePath = path.join(globalStateDir(), `.doctor-${process.pid}-${randomUUID()}.tmp`);
+  try {
+    await ensureDir(globalStateDir());
+    await access(globalStateDir(), constants.R_OK | constants.W_OK | constants.X_OK);
+    await writeFile(probePath, '');
+    await rm(probePath, { force: true });
+    return { name: 'state-dir', ok: true, detail: stateDirDetail() };
+  } catch (error) {
+    await rm(probePath, { force: true }).catch(() => undefined);
+    return {
+      name: 'state-dir',
+      ok: false,
+      detail: `${stateDirDetail()}: ${formatError(error)}. Set GLOSS_STATE_DIR to a writable directory for sandboxed agents.`
+    };
+  }
+}
+
+async function checkServerInfoAccess(): Promise<DoctorCheck> {
+  try {
+    await access(globalServerFile(), constants.R_OK | constants.W_OK);
+    return { name: 'server-json', ok: true, detail: globalServerFile() };
+  } catch (error) {
+    if (isFileNotFound(error)) {
+      return { name: 'server-json', ok: true, detail: 'not present' };
+    }
+    return {
+      name: 'server-json',
+      ok: false,
+      detail: serverInfoPermissionMessage('access', error)
+    };
+  }
+}
+
+function stateDirDetail(): string {
+  return process.env.GLOSS_STATE_DIR
+    ? `${globalStateDir()} (from GLOSS_STATE_DIR)`
+    : `${globalStateDir()} (default; set GLOSS_STATE_DIR for a writable sandbox state dir)`;
 }
 
 async function baseForExistingReview(

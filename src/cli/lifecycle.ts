@@ -1,6 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
 import { closeSync, existsSync, openSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -8,16 +7,22 @@ import getPort from 'get-port';
 import {
   ensureDir,
   globalLogDir,
-  globalServerFile,
   globalServerLogFile,
   globalStateDir,
   packageVersion
 } from '../shared/paths';
-import { readServerInfo, writeServerInfo } from '../shared/server-info';
+import { readServerInfo, removeServerInfoFile, writeServerInfo } from '../shared/server-info';
 import type { ServerInfo } from '../shared/types';
 import { ServerClient } from './server-client';
 
 export { readServerInfo } from '../shared/server-info';
+
+export interface StopServerResult {
+  stopped: boolean;
+  info: ServerInfo | null;
+  stoppedPids?: number[];
+  warning?: string;
+}
 
 const execFileAsync = promisify(execFile);
 const gracefulShutdownTimeoutMs = 2000;
@@ -96,7 +101,12 @@ async function launchServer(port: number): Promise<ServerInfo> {
     startedAt: new Date().toISOString(),
     stateDir: globalStateDir()
   };
-  await writeServerInfo(info);
+  try {
+    await writeServerInfo(info);
+  } catch (error) {
+    await terminatePid(info.pid);
+    throw error;
+  }
 
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
@@ -111,11 +121,9 @@ async function launchServer(port: number): Promise<ServerInfo> {
   throw new Error(`Server did not become responsive. See ${globalServerLogFile()}`);
 }
 
-export async function stopServer(
-  options: { all?: boolean } = {}
-): Promise<{ stopped: boolean; info: ServerInfo | null; stoppedPids?: number[] }> {
+export async function stopServer(options: { all?: boolean } = {}): Promise<StopServerResult> {
   if (options.all) {
-    const info = await readServerInfo();
+    const { info, warning: readWarning } = await readServerInfoForStop();
     const daemonPids = await listGlossDaemonPids();
     const stoppedPids: number[] = [];
     for (const pid of daemonPids) {
@@ -123,30 +131,31 @@ export async function stopServer(
         stoppedPids.push(pid);
       }
     }
-    await rm(globalServerFile(), { force: true });
-    return { stopped: stoppedPids.length > 0, info, stoppedPids };
+    return withWarning(
+      { stopped: stoppedPids.length > 0, info, stoppedPids },
+      combineWarnings(readWarning, await removeServerInfoFile())
+    );
   }
 
-  const info = await readServerInfo();
+  const { info, warning: readWarning } = await readServerInfoForStop();
   if (!info) {
-    return { stopped: false, info: null };
+    return withWarning({ stopped: false, info: null }, readWarning);
   }
 
   if (!isPidAlive(info.pid)) {
-    await removeServerInfoForPid(info.pid);
-    return { stopped: false, info };
+    return withWarning({ stopped: false, info }, await removeServerInfoForPid(info.pid));
   }
 
   if (!(await isGlossDaemonPid(info.pid))) {
-    await removeServerInfoForPid(info.pid);
-    return { stopped: false, info };
+    return withWarning({ stopped: false, info }, await removeServerInfoForPid(info.pid));
   }
 
   const stopped = await terminatePid(info.pid);
+  let warning: string | null = null;
   if (stopped) {
-    await removeServerInfoForPid(info.pid);
+    warning = await removeServerInfoForPid(info.pid);
   }
-  return { stopped, info };
+  return withWarning({ stopped, info }, warning);
 }
 
 function isPidAlive(pid: number): boolean {
@@ -199,11 +208,32 @@ async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> 
   return !isPidAlive(pid);
 }
 
-async function removeServerInfoForPid(pid: number): Promise<void> {
+async function removeServerInfoForPid(pid: number): Promise<string | null> {
   const current = await readServerInfo().catch(() => null);
   if (!current || current.pid === pid) {
-    await rm(globalServerFile(), { force: true });
+    return removeServerInfoFile();
   }
+  return null;
+}
+
+function withWarning<T extends StopServerResult>(result: T, warning: string | null): T {
+  return warning ? { ...result, warning } : result;
+}
+
+async function readServerInfoForStop(): Promise<{
+  info: ServerInfo | null;
+  warning: string | null;
+}> {
+  try {
+    return { info: await readServerInfo(), warning: null };
+  } catch (error) {
+    return { info: null, warning: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function combineWarnings(...warnings: Array<string | null>): string | null {
+  const present = warnings.filter((warning): warning is string => Boolean(warning));
+  return present.length > 0 ? present.join(' ') : null;
 }
 
 async function isGlossDaemonPid(pid: number): Promise<boolean> {
