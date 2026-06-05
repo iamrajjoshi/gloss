@@ -78,5 +78,11 @@ pending reviews. Use `gloss doctor` for stale process cleanup diagnostics,
 `gloss clear --dry-run` before deleting completed artifacts older than 30 days
 with `gloss clear`. Pending reviews are always preserved.
 
+Agents should not ask the user to unlock `~/.gloss/server.json` after a review.
+That file is only a daemon pointer. If cleanup reports a permission error, run
+`gloss doctor`; if needed, have the user fix ownership, write permissions, or
+platform-specific immutable/read-only attributes on the state directory, or set
+`GLOSS_STATE_DIR` to a writable sandbox state directory.
+
 For less-common options, run `gloss open --help` or `gloss --help` instead of
 guessing flags.

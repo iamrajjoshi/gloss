@@ -178,8 +178,13 @@ gloss open --review <reviewId> --json
 `gloss open --json` intentionally waits until browser submission or timeout.
 Use `--no-watch` when the caller only needs to open the review. The background
 daemon exits automatically after a short idle window with no pending reviews.
-If cleanup looks stale, run `gloss doctor`; use `gloss stop --all` when you
-want to terminate all Gloss daemon processes for the current user.
+You do not need to unlock `~/.gloss/server.json` after finishing a review; it is
+only the background daemon pointer. If cleanup looks stale or reports a
+permission error, run `gloss doctor`; use `gloss stop --all` when you want to
+terminate all Gloss daemon processes for the current user. If macOS flags made
+the file immutable, inspect with `ls -lOe ~/.gloss ~/.gloss/server.json` and
+clear the flag with `chflags nouchg ~/.gloss/server.json`. For sandboxed agents,
+set `GLOSS_STATE_DIR` to a writable directory.
 Use `gloss clear --dry-run` to preview old completed review artifacts, and
 `gloss clear` to delete completed artifacts older than 30 days. Pending reviews
 are always preserved.

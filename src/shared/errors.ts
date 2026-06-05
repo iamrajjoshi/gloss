@@ -5,3 +5,9 @@ export function formatError(error: unknown): string {
 export function isFileNotFound(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
+
+export function isPermissionError(error: unknown): error is NodeJS.ErrnoException {
+  return (
+    error instanceof Error && 'code' in error && (error.code === 'EACCES' || error.code === 'EPERM')
+  );
+}

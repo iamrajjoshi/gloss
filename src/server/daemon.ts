@@ -1,7 +1,6 @@
-import { rm } from 'node:fs/promises';
 import { serve } from '@hono/node-server';
-import { globalServerFile, globalStateDir, packageVersion } from '../shared/paths';
-import { readServerInfo, writeServerInfo } from '../shared/server-info';
+import { globalStateDir, packageVersion } from '../shared/paths';
+import { readServerInfo, removeServerInfoFile, writeServerInfo } from '../shared/server-info';
 import { createApp } from './index';
 import { runStartupCleanup } from './maintenance';
 import { reviewStore } from './store';
@@ -107,6 +106,9 @@ async function shutdown(exitCode: number): Promise<void> {
 async function removeCurrentServerInfo(): Promise<void> {
   const info = await readServerInfo().catch(() => null);
   if (!info || info.pid === process.pid) {
-    await rm(globalServerFile(), { force: true });
+    const warning = await removeServerInfoFile();
+    if (warning) {
+      process.stderr.write(`Warning: ${warning}\n`);
+    }
   }
 }
