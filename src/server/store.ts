@@ -430,10 +430,19 @@ export class ReviewStore {
     const reviewLoads: Array<Promise<ReviewRecord | null>> = [];
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        reviewLoads.push(this.loadReview(entry.name));
+        reviewLoads.push(this.loadReviewForList(entry.name));
       }
     }
     await Promise.all(reviewLoads);
+  }
+
+  private async loadReviewForList(id: string): Promise<ReviewRecord | null> {
+    try {
+      return await this.loadReview(id);
+    } catch (error) {
+      process.stderr.write(`Warning: Skipping corrupt review ${id}: ${formatError(error)}\n`);
+      return null;
+    }
   }
 
   private async loadReview(id: string): Promise<ReviewRecord | null> {

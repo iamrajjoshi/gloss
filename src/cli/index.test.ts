@@ -35,6 +35,7 @@ import {
 import { makeComment, makeDiff } from '../test/factories';
 
 const originalStateDir = process.env.GLOSS_STATE_DIR;
+const originalSkipStaleDaemonReap = process.env.GLOSS_SKIP_STALE_DAEMON_REAP;
 let tempDirs: string[] = [];
 let repoRoot = '';
 let server: ReturnType<typeof serve> | null = null;
@@ -45,6 +46,7 @@ beforeEach(async () => {
   repoRoot = await mkdtemp(path.join(tmpdir(), 'gloss-cli-repo-'));
   tempDirs = [stateDir, repoRoot];
   process.env.GLOSS_STATE_DIR = stateDir;
+  process.env.GLOSS_SKIP_STALE_DAEMON_REAP = '1';
   vi.resetModules();
 });
 
@@ -54,6 +56,11 @@ afterEach(async () => {
     delete process.env.GLOSS_STATE_DIR;
   } else {
     process.env.GLOSS_STATE_DIR = originalStateDir;
+  }
+  if (originalSkipStaleDaemonReap === undefined) {
+    delete process.env.GLOSS_SKIP_STALE_DAEMON_REAP;
+  } else {
+    process.env.GLOSS_SKIP_STALE_DAEMON_REAP = originalSkipStaleDaemonReap;
   }
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
 });

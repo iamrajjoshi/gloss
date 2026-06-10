@@ -1,12 +1,14 @@
+import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { globalStateDir, packageVersion } from '../shared/paths';
 import { readServerInfo, removeServerInfoFile, writeServerInfo } from '../shared/server-info';
+import { createIdleScheduler, normalizeIdleTimeoutMs } from './idle';
 import { createApp } from './index';
 import { runStartupCleanup } from './maintenance';
-import { reviewStore } from './store';
 
 const port = Number(process.env.GLOSS_PORT ?? '0');
-const idleTimeoutMs = Number(process.env.GLOSS_IDLE_TIMEOUT_MS ?? '120000');
+const idleTimeoutMs = normalizeIdleTimeoutMs();
+const daemonPath = fileURLToPath(import.meta.url);
 
 if (!port) {
   throw new Error('GLOSS_PORT is required');
@@ -14,18 +16,33 @@ if (!port) {
 
 const origin = `http://localhost:${port}`;
 const eventStreams = new Set<() => void>();
-let idleTimer: NodeJS.Timeout | null = null;
 let shuttingDown = false;
+const idleScheduler = createIdleScheduler({
+  timeoutMs: idleTimeoutMs,
+  hasLiveClients: () => eventStreams.size > 0,
+  isShuttingDown: () => shuttingDown,
+  shutdown: () => shutdown(0)
+});
 
 const server = serve({
   fetch: createApp(origin, {
     onReviewActivity: () => {
-      void scheduleIdleShutdown();
+      idleScheduler.schedule();
     },
     registerEventStream: (close) => {
       eventStreams.add(close);
+      idleScheduler.schedule();
       return () => {
         eventStreams.delete(close);
+        idleScheduler.schedule();
+      };
+    },
+    health: () => {
+      return {
+        connections: eventStreams.size,
+        cwd: process.cwd(),
+        daemonPath,
+        stateDir: globalStateDir()
       };
     }
   }).fetch,
@@ -37,11 +54,13 @@ await writeServerInfo({
   port,
   version: packageVersion,
   startedAt: new Date().toISOString(),
-  stateDir: globalStateDir()
+  stateDir: globalStateDir(),
+  cwd: process.cwd(),
+  daemonPath
 });
 
 await runStartupCleanup();
-await scheduleIdleShutdown();
+idleScheduler.schedule();
 
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
   process.on(signal, () => {
@@ -49,50 +68,12 @@ for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
   });
 }
 
-async function scheduleIdleShutdown(): Promise<void> {
-  if (shuttingDown || idleTimeoutMs <= 0) {
-    return;
-  }
-
-  const activeReviews = await countActiveReviews();
-  if (activeReviews > 0) {
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-      idleTimer = null;
-    }
-    return;
-  }
-
-  if (!idleTimer) {
-    idleTimer = setTimeout(() => {
-      idleTimer = null;
-      void shutdownIfIdle();
-    }, idleTimeoutMs);
-  }
-}
-
-async function shutdownIfIdle(): Promise<void> {
-  if ((await countActiveReviews()) > 0) {
-    await scheduleIdleShutdown();
-    return;
-  }
-  await shutdown(0);
-}
-
-async function countActiveReviews(): Promise<number> {
-  const reviews = await reviewStore.list();
-  return reviews.filter((review) => review.status === 'pending').length;
-}
-
 async function shutdown(exitCode: number): Promise<void> {
   if (shuttingDown) {
     return;
   }
   shuttingDown = true;
-  if (idleTimer) {
-    clearTimeout(idleTimer);
-    idleTimer = null;
-  }
+  idleScheduler.cancel();
   for (const close of [...eventStreams]) {
     close();
   }

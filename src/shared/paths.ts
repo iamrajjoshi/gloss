@@ -23,6 +23,10 @@ export function globalServerFile(): string {
   return path.join(globalStateDir(), 'server.json');
 }
 
+export function globalServerLockDir(): string {
+  return path.join(globalStateDir(), 'server.lock');
+}
+
 export function globalLogDir(): string {
   return path.join(globalStateDir(), 'logs');
 }

@@ -17,6 +17,7 @@ import {
   isCommitRangeDiffResponse,
   isCreateReviewResponse,
   isCreateReviewTurnResponse,
+  isHealthResponse,
   isListReviewsResponse,
   isOpenFileResponse,
   isOpenResult,
@@ -53,6 +54,29 @@ afterEach(async () => {
 });
 
 describe('Gloss review API global persistence', () => {
+  it('includes optional daemon metadata in health responses', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321', {
+      health: () => ({
+        connections: 2,
+        cwd: repoRoot,
+        daemonPath: '/tmp/gloss/dist/server/daemon.js',
+        stateDir: process.env.GLOSS_STATE_DIR ?? ''
+      })
+    });
+
+    const response = await app.request('/api/health');
+    const health = await responseJson(response, isHealthResponse, 'health response');
+
+    expect(health).toMatchObject({
+      ok: true,
+      connections: 2,
+      cwd: repoRoot,
+      daemonPath: '/tmp/gloss/dist/server/daemon.js',
+      stateDir: process.env.GLOSS_STATE_DIR ?? ''
+    });
+  });
+
   it('creates, submits, lists, and reloads reviews from global state', async () => {
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');

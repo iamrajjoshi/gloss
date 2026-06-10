@@ -100,8 +100,11 @@ compares only against the requested ref and does not switch to a branch diff.
 Use `gloss open --review <reviewId> --json` after applying feedback to capture
 the next diff as another turn in the same browser review.
 The background server exits automatically after a short idle window with no
-pending reviews. `gloss doctor` reports unmanaged daemon processes, and
-`gloss stop --all` cleans them up.
+live review clients. Pending review artifacts stay on disk and can be resumed,
+but they do not keep the daemon alive by themselves. `gloss doctor` reports
+unmanaged daemon processes, and normal startup/status commands also clean up
+clearly stale daemons. `gloss stop --all` cleans up every Gloss daemon for the
+current user.
 
 You do not need to unlock `~/.gloss/server.json` after finishing a review.
 That file is only the background daemon pointer, not a review lock. If a

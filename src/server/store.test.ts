@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   globalReviewDiffFile,
   globalReviewDir,
@@ -30,6 +30,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (originalStateDir === undefined) {
     delete process.env.GLOSS_STATE_DIR;
   } else {
@@ -389,14 +390,20 @@ describe('ReviewStore global persistence', () => {
     expect(await reloaded.list()).toHaveLength(1);
   });
 
-  it('surfaces invalid persisted review metadata instead of hiding the review', async () => {
+  it('skips invalid persisted review metadata during list without hiding targeted access', async () => {
     const store = new ReviewStore();
     const record = await store.create(makeStoreDiff());
+    const valid = await store.create(makeStoreDiff({ filePath: 'valid.ts' }));
     await writeFile(globalReviewMetaFile(record.meta.id), '{invalid json\n');
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
     const reloaded = new ReviewStore();
 
-    await expect(reloaded.list()).rejects.toThrow(/Invalid review metadata/);
+    await expect(reloaded.list()).resolves.toEqual([valid.meta]);
+    await expect(reloaded.get(record.meta.id)).rejects.toThrow(/Invalid review metadata/);
+    expect(stderr).toHaveBeenCalledWith(
+      expect.stringContaining(`Skipping corrupt review ${record.meta.id}`)
+    );
   });
 });
 

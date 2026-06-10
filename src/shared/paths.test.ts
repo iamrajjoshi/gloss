@@ -12,6 +12,7 @@ import {
   globalReviewResolvedFile,
   globalReviewsDir,
   globalServerFile,
+  globalServerLockDir,
   globalServerLogFile,
   globalStateDir
 } from './paths';
@@ -33,6 +34,7 @@ describe('global Gloss paths', () => {
     const root = path.join(homedir(), '.gloss');
     expect(globalStateDir()).toBe(root);
     expect(globalServerFile()).toBe(path.join(root, 'server.json'));
+    expect(globalServerLockDir()).toBe(path.join(root, 'server.lock'));
     expect(globalLogDir()).toBe(path.join(root, 'logs'));
     expect(globalServerLogFile()).toBe(path.join(root, 'logs', 'server.log'));
     expect(globalReviewsDir()).toBe(path.join(root, 'reviews'));

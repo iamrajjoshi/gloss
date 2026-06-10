@@ -44,6 +44,7 @@ const eventStreamHeartbeatMs = 15_000;
 interface AppOptions {
   onReviewActivity?: () => void;
   registerEventStream?: (close: () => void) => () => void;
+  health?: () => Partial<Pick<HealthResponse, 'connections' | 'cwd' | 'daemonPath' | 'stateDir'>>;
 }
 
 const mimeTypes: Record<string, string> = {
@@ -65,7 +66,8 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     const response: HealthResponse = {
       ok: true,
       version: packageVersion,
-      activeReviews: reviews.filter((review) => review.status === 'pending').length
+      activeReviews: reviews.filter((review) => review.status === 'pending').length,
+      ...options.health?.()
     };
     return c.json(response);
   });

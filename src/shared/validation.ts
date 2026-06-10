@@ -78,7 +78,9 @@ export function isServerInfo(value: unknown): value is ServerInfo {
     isNumber(value.port) &&
     isString(value.version) &&
     isString(value.startedAt) &&
-    isString(value.stateDir)
+    isString(value.stateDir) &&
+    isOptionalString(value.cwd) &&
+    isOptionalString(value.daemonPath)
   );
 }
 
@@ -87,7 +89,11 @@ export function isHealthResponse(value: unknown): value is HealthResponse {
     isRecord(value) &&
     isBoolean(value.ok) &&
     isString(value.version) &&
-    isNumber(value.activeReviews)
+    isNumber(value.activeReviews) &&
+    isOptionalNumber(value.connections) &&
+    isOptionalString(value.stateDir) &&
+    isOptionalString(value.cwd) &&
+    isOptionalString(value.daemonPath)
   );
 }
 
