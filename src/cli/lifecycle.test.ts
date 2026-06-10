@@ -5,7 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { globalServerFile, packageVersion } from '../shared/paths';
 import { readServerInfo, writeServerInfo } from '../shared/server-info';
 import type { ServerInfo } from '../shared/types';
-import { isServerResponsive, parseGlossDaemonPids, stopServer } from './lifecycle';
+import {
+  isServerResponsive,
+  parseGlossDaemonPids,
+  parseGlossDaemonProcesses,
+  stopServer
+} from './lifecycle';
 
 const serverInfo: ServerInfo = {
   pid: process.pid,
@@ -92,5 +97,30 @@ describe('parseGlossDaemonPids', () => {
     ].join('\n');
 
     expect(parseGlossDaemonPids(stdout, 'raj.joshi', 333)).toEqual([111, 444]);
+  });
+
+  it('returns daemon metadata for stale-source decisions', () => {
+    const stdout = [
+      ' 111 raj.joshi /opt/homebrew/bin/node /Users/raj/proj/gloss/dist/server/daemon.js',
+      ' 222 raj.joshi /opt/homebrew/bin/node /opt/homebrew/Cellar/gloss/0.7.1/libexec/lib/node_modules/getgloss/dist/server/daemon.js'
+    ].join('\n');
+
+    expect(parseGlossDaemonProcesses(stdout, 'raj.joshi')).toEqual([
+      {
+        pid: 111,
+        user: 'raj.joshi',
+        command: '/opt/homebrew/bin/node /Users/raj/proj/gloss/dist/server/daemon.js',
+        daemonPath: '/Users/raj/proj/gloss/dist/server/daemon.js'
+      },
+      {
+        pid: 222,
+        user: 'raj.joshi',
+        command:
+          '/opt/homebrew/bin/node /opt/homebrew/Cellar/gloss/0.7.1/libexec/lib/node_modules/getgloss/dist/server/daemon.js',
+        daemonPath:
+          '/opt/homebrew/Cellar/gloss/0.7.1/libexec/lib/node_modules/getgloss/dist/server/daemon.js',
+        homebrewVersion: '0.7.1'
+      }
+    ]);
   });
 });

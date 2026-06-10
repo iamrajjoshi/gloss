@@ -32,6 +32,8 @@ import {
   parseJsonValue
 } from '../shared/validation';
 
+const timedWatchAttemptMs = 1000;
+
 export class ServerClient {
   constructor(private readonly baseUrl: string) {}
 
@@ -126,11 +128,15 @@ export class ServerClient {
       }
 
       const controller = new AbortController();
-      const timeout = remainingMs ? setTimeout(() => controller.abort(), remainingMs) : null;
+      const timeoutMs = remainingMs === null ? null : Math.min(remainingMs, timedWatchAttemptMs);
+      const timeout = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
       try {
         return await this.readReviewEvents(reviewId, controller.signal);
       } catch (error) {
         if (isAbortError(error)) {
+          if (deadline && Date.now() < deadline) {
+            throw new Error('watch stream ended before completion');
+          }
           throw new Error(`watch timed out after ${timeoutSeconds} seconds`);
         }
         if (!isPrematureWatchEnd(error)) {

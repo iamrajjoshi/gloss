@@ -309,6 +309,8 @@ export interface ServerInfo {
   version: string;
   startedAt: string;
   stateDir: string;
+  cwd?: string;
+  daemonPath?: string;
 }
 
 export interface OpenResult {
@@ -327,6 +329,10 @@ export interface HealthResponse {
   ok: boolean;
   version: string;
   activeReviews: number;
+  connections?: number;
+  stateDir?: string;
+  cwd?: string;
+  daemonPath?: string;
 }
 
 interface ReviewRegistrationResponse {

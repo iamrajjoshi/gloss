@@ -3,10 +3,16 @@ import { tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { globalServerFile, globalStateDir, packageVersion } from '../shared/paths';
+import {
+  globalServerFile,
+  globalServerLockDir,
+  globalStateDir,
+  packageVersion
+} from '../shared/paths';
 import type { ServerInfo } from '../shared/types';
 
 const originalStateDir = process.env.GLOSS_STATE_DIR;
+const originalSkipStaleDaemonReap = process.env.GLOSS_SKIP_STALE_DAEMON_REAP;
 let tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -20,6 +26,11 @@ afterEach(async () => {
     delete process.env.GLOSS_STATE_DIR;
   } else {
     process.env.GLOSS_STATE_DIR = originalStateDir;
+  }
+  if (originalSkipStaleDaemonReap === undefined) {
+    delete process.env.GLOSS_SKIP_STALE_DAEMON_REAP;
+  } else {
+    process.env.GLOSS_SKIP_STALE_DAEMON_REAP = originalSkipStaleDaemonReap;
   }
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
   tempDirs = [];
@@ -107,12 +118,97 @@ describe('lifecycle server info permission recovery', () => {
     expect(result.stoppedPids).toEqual([daemonPid]);
     expect(result.warning).toContain('server.json` is not a review lock');
   });
+
+  it('serializes concurrent starts behind one server lock', async () => {
+    await useTempStateDir();
+    const spawnMock = vi.fn(() => ({ pid: 12345, unref: vi.fn() }));
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return { ...actual, existsSync: vi.fn(() => true) };
+    });
+    vi.doMock('node:child_process', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:child_process')>();
+      return { ...actual, spawn: spawnMock };
+    });
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      if (pid === 12345 && signal === 0) {
+        return true;
+      }
+      return true;
+    }) as typeof process.kill);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, version: packageVersion, activeReviews: 0 }), {
+            headers: { 'content-type': 'application/json' }
+          })
+      )
+    );
+    const { ensureServer } = await import('./lifecycle');
+
+    const [first, second] = await Promise.all([ensureServer(), ensureServer()]);
+
+    expect(first).toMatchObject({ pid: 12345 });
+    expect(second).toMatchObject({ pid: 12345 });
+    expect(spawnMock).toHaveBeenCalledOnce();
+    await expect(readFile(path.join(globalServerLockDir(), 'owner.json'))).rejects.toThrow();
+  });
+
+  it('reaps missing, stale Homebrew, and duplicate same-source daemons conservatively', async () => {
+    await useTempStateDir();
+    delete process.env.GLOSS_SKIP_STALE_DAEMON_REAP;
+    const managedDaemon = '/tmp/current-gloss/dist/server/daemon.js';
+    const stdout = [
+      ` 100 ${userInfo().username} /opt/homebrew/bin/node ${managedDaemon}`,
+      ` 101 ${userInfo().username} /opt/homebrew/bin/node ${managedDaemon}`,
+      ` 102 ${userInfo().username} /opt/homebrew/bin/node /tmp/gone-gloss/dist/server/daemon.js`,
+      ` 103 ${userInfo().username} /opt/homebrew/bin/node /opt/homebrew/Cellar/gloss/0.7.1/libexec/lib/node_modules/getgloss/dist/server/daemon.js`,
+      ` 104 ${userInfo().username} /opt/homebrew/bin/node /opt/homebrew/Cellar/gloss/${packageVersion}/libexec/lib/node_modules/getgloss/dist/server/daemon.js`,
+      ' 105 other /opt/homebrew/bin/node /tmp/current-gloss/dist/server/daemon.js'
+    ].join('\n');
+    const execFileMock = vi.fn() as ReturnType<typeof vi.fn> & {
+      [promisify.custom]: () => Promise<{ stdout: string }>;
+    };
+    execFileMock[promisify.custom] = vi.fn(async () => ({ stdout }));
+    vi.doMock('node:child_process', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:child_process')>();
+      return { ...actual, execFile: execFileMock };
+    });
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return {
+        ...actual,
+        existsSync: vi.fn((target: string) => target !== '/tmp/gone-gloss/dist/server/daemon.js')
+      };
+    });
+    const alive = new Set([100, 101, 102, 103, 104]);
+    const killed: number[] = [];
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      if (signal === 0) {
+        if (alive.has(pid)) {
+          return true;
+        }
+        throw permissionError('stopped pid');
+      }
+      killed.push(pid);
+      alive.delete(pid);
+      return true;
+    }) as typeof process.kill);
+    const { reapStaleDaemons } = await import('./lifecycle');
+
+    const reaped = await reapStaleDaemons(makeServerInfo(100, 43210, managedDaemon));
+
+    expect(reaped).toEqual([101, 102, 103]);
+    expect(killed).toEqual([101, 102, 103]);
+  });
 });
 
 async function useTempStateDir(): Promise<void> {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'gloss-lifecycle-permissions-state-'));
   tempDirs = [stateDir];
   process.env.GLOSS_STATE_DIR = stateDir;
+  process.env.GLOSS_SKIP_STALE_DAEMON_REAP = '1';
 }
 
 function mockServerInfoRemovalDenied(): ReturnType<typeof vi.fn> {
@@ -129,13 +225,14 @@ function mockServerInfoRemovalDenied(): ReturnType<typeof vi.fn> {
   return rmMock;
 }
 
-function makeServerInfo(pid: number, port: number): ServerInfo {
+function makeServerInfo(pid: number, port: number, daemonPath?: string): ServerInfo {
   return {
     pid,
     port,
     version: packageVersion,
     startedAt: '2026-05-23T12:00:00.000Z',
-    stateDir: globalStateDir()
+    stateDir: globalStateDir(),
+    ...(daemonPath ? { daemonPath } : {})
   };
 }
 

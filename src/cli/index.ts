@@ -24,6 +24,7 @@ import {
   isServerResponsive,
   listGlossDaemonPids,
   readServerInfo,
+  reapStaleDaemons,
   type StopServerResult,
   serverUrl,
   startServer,
@@ -241,7 +242,9 @@ program
   .description('Show server and active reviews')
   .action(async () => {
     const globals = program.opts<GlobalOptions>();
-    const info = await readServerInfo();
+    let info = await readServerInfo();
+    await reapStaleDaemons(info);
+    info = await readServerInfo();
     const responsive = info ? await isServerResponsive(info) : false;
     const reviews = await listReviewsForStatus({ responsive, server: info });
     const status = { running: responsive, server: info, reviews };
