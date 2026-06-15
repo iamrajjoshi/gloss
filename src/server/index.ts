@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { countCommentFiles } from '../shared/comments';
 import { formatError, isFileNotFound } from '../shared/errors';
-import { captureCommitRangeDiff } from '../shared/git-diff';
+import { captureCommitRangeDiff, captureDiffContext } from '../shared/git-diff';
 import type { JsonValue } from '../shared/json';
 import { packageVersion } from '../shared/paths';
 import { isResolvableReviewStatus } from '../shared/reviews';
@@ -15,6 +15,10 @@ import type {
   CommitRangeDiffResponse,
   CreateReviewResponse,
   CreateReviewTurnResponse,
+  DiffContextRequest,
+  DiffContextSource,
+  DiffFile,
+  DiffPayload,
   HealthResponse,
   ListReviewsResponse,
   OpenFileResponse,
@@ -25,9 +29,11 @@ import type {
   ReviewTurnSummary,
   SubmitReviewRequest
 } from '../shared/types';
+import { DIFF_CONTEXT_MAX_LINES } from '../shared/types';
 import {
   isClearReviewsRequest,
   isCommitRangeDiffRequest,
+  isDiffContextRequest,
   isDiffPayload,
   isOpenFileRequest,
   isResolutionRequest,
@@ -297,6 +303,68 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     return c.json(response);
   });
 
+  app.post('/api/reviews/:id/files/context', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isDiffContextRequest, 'diff context request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+
+    const body: DiffContextRequest = parsed.body;
+    if (body.lineCount > DIFF_CONTEXT_MAX_LINES) {
+      return c.json({ error: `lineCount must be ${DIFF_CONTEXT_MAX_LINES} or less` }, 400);
+    }
+
+    const turn = body.turnId ? await reviewStore.getTurn(id, body.turnId) : null;
+    if (body.turnId && !turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+    const diffPayload = turn?.diff ?? existing.diff;
+    const repoRoot = path.resolve(diffPayload.cwd);
+    const pathError =
+      validateContextPath(repoRoot, body.filePath, 'filePath') ??
+      (body.oldPath ? validateContextPath(repoRoot, body.oldPath, 'oldPath') : null);
+    if (pathError) {
+      return c.json({ error: pathError }, 400);
+    }
+
+    const source = await resolveContextSource(diffPayload, body.source);
+    if (!source.ok) {
+      return c.json({ error: source.error }, source.status);
+    }
+
+    const reviewFile = source.files.find((file) => file.path === body.filePath);
+    if (!reviewFile) {
+      return c.json({ error: 'file is not part of this review context' }, 404);
+    }
+    if ((reviewFile.oldPath ?? null) !== body.oldPath) {
+      return c.json({ error: 'oldPath does not match the reviewed file' }, 400);
+    }
+    if (reviewFile.isBinary) {
+      return c.json({ error: 'binary file context is not available' }, 409);
+    }
+
+    try {
+      const response = await captureDiffContext({
+        filePath: body.filePath,
+        oldPath: body.oldPath,
+        oldRef: source.oldRef,
+        newRef: source.newRef,
+        oldStart: body.oldStart,
+        newStart: body.newStart,
+        lineCount: body.lineCount,
+        repoRoot
+      });
+      return c.json(response);
+    } catch (error) {
+      return c.json({ error: `context is unavailable: ${formatError(error)}` }, 409);
+    }
+  });
+
   app.post('/api/reviews/:id/files/open', async (c) => {
     const id = c.req.param('id');
     const existing = await reviewStore.get(id);
@@ -517,6 +585,84 @@ async function readJsonBody<T>(
 function isPathWithin(parentPath: string, childPath: string): boolean {
   const relative = path.relative(parentPath, childPath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+type ContextSourceResolution =
+  | {
+      ok: true;
+      files: DiffFile[];
+      oldRef: string | null;
+      newRef: string | null;
+    }
+  | { ok: false; status: 400 | 404 | 409; error: string };
+
+async function resolveContextSource(
+  diffPayload: DiffPayload,
+  source: DiffContextSource
+): Promise<ContextSourceResolution> {
+  if (source.mode === 'turn') {
+    return {
+      ok: true,
+      files: diffPayload.files,
+      oldRef: diffPayload.base.sha,
+      newRef: diffPayload.scope.comparison.sha
+    };
+  }
+
+  const commitDiffs = diffPayload.commitDiffs ?? [];
+  if (commitDiffs.length === 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'commit context is only available for branch reviews'
+    };
+  }
+
+  if (source.mode === 'commit') {
+    const commitDiff = commitDiffs.find((diff) => diff.commit.sha === source.sha);
+    if (!commitDiff) {
+      return { ok: false, status: 404, error: 'commit must be part of this review' };
+    }
+    return {
+      ok: true,
+      files: commitDiff.files,
+      oldRef: `${source.sha}^`,
+      newRef: source.sha
+    };
+  }
+
+  const fromIndex = commitDiffs.findIndex((diff) => diff.commit.sha === source.fromSha);
+  const toIndex = commitDiffs.findIndex((diff) => diff.commit.sha === source.toSha);
+  if (fromIndex < 0 || toIndex < 0) {
+    return { ok: false, status: 404, error: 'commit range must use commits from this review' };
+  }
+  if (fromIndex > toIndex) {
+    return { ok: false, status: 400, error: 'fromSha must come before or match toSha' };
+  }
+
+  const rangeDiff =
+    source.fromSha === source.toSha
+      ? commitDiffs[fromIndex]
+      : await captureCommitRangeDiff(source.fromSha, source.toSha, diffPayload.cwd);
+  return {
+    ok: true,
+    files: rangeDiff.files,
+    oldRef: `${source.fromSha}^`,
+    newRef: source.toSha
+  };
+}
+
+function validateContextPath(repoRoot: string, filePath: string, label: string): string | null {
+  if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath)) {
+    return `${label} must be a repo-relative path`;
+  }
+
+  const requestedAbsolutePath = path.resolve(repoRoot, filePath);
+  if (!isPathWithin(repoRoot, requestedAbsolutePath)) {
+    return `${label} must stay within the review cwd`;
+  }
+
+  return null;
 }
 
 function activeTurnSummary(meta: ReviewMeta): ReviewTurnSummary {

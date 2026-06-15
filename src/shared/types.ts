@@ -13,7 +13,7 @@ export interface ClearReviewEntry {
   lastActivityAt: string;
 }
 
-export interface ClearReviewSkipped {
+interface ClearReviewSkipped {
   reviewId: string;
   artifactDir: string;
   reason: string;
@@ -136,6 +136,30 @@ export interface CommitRangeDiffResponse {
   stats: DiffStats;
   rawDiff: string;
   files: DiffFile[];
+}
+
+export const DIFF_CONTEXT_MAX_LINES = 500;
+
+export type DiffContextSource =
+  | { mode: 'turn' }
+  | { mode: 'commit'; sha: string }
+  | { mode: 'range'; fromSha: string; toSha: string };
+
+export interface DiffContextRequest {
+  filePath: string;
+  oldPath: string | null;
+  turnId?: string;
+  source: DiffContextSource;
+  oldStart: number;
+  newStart: number;
+  lineCount: number;
+}
+
+export interface DiffContextResponse {
+  filePath: string;
+  oldStart: number;
+  newStart: number;
+  lines: DiffLine[];
 }
 
 export const REVIEW_SCOPE_MODES = ['all', 'single', 'range'] as const;

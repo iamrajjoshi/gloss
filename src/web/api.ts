@@ -3,6 +3,9 @@ import type {
   Comment,
   CommitRangeDiffRequest,
   CommitRangeDiffResponse,
+  DiffContextRequest,
+  DiffContextResponse,
+  DiffContextSource,
   OpenFileRequest,
   OpenFileResponse,
   OpenResult,
@@ -12,6 +15,7 @@ import type {
 } from '../shared/types';
 import {
   isCommitRangeDiffResponse,
+  isDiffContextResponse,
   isOpenFileResponse,
   isOpenResult,
   isReviewRecord,
@@ -80,5 +84,44 @@ export async function fetchCommitRangeDiff(
     }),
     isCommitRangeDiffResponse,
     'commit range diff response'
+  );
+}
+
+export async function fetchDiffContext({
+  filePath,
+  lineCount,
+  newStart,
+  oldPath,
+  oldStart,
+  reviewId,
+  source,
+  turnId
+}: {
+  reviewId: string;
+  filePath: string;
+  oldPath: string | null;
+  turnId?: string;
+  source: DiffContextSource;
+  oldStart: number;
+  newStart: number;
+  lineCount: number;
+}): Promise<DiffContextResponse> {
+  const request: DiffContextRequest = {
+    filePath,
+    oldPath,
+    turnId,
+    source,
+    oldStart,
+    newStart,
+    lineCount
+  };
+  return json(
+    await fetch(`/api/reviews/${reviewId}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request)
+    }),
+    isDiffContextResponse,
+    'diff context response'
   );
 }

@@ -22,6 +22,7 @@ import { isResolvableReviewStatus } from '../../shared/reviews';
 import type {
   CommitDiff,
   CommitRangeDiffResponse,
+  DiffContextSource,
   DiffPayload,
   ReviewRecord,
   ReviewScope,
@@ -315,6 +316,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   const titlePresentation = reviewTitlePresentation(displayRecord.meta.branch, displayTitle);
   const branchPill = branchPillForTitle(displayRecord.meta.branch, displayTitle);
   const submitReviewScope = reviewScopeForCommitView(effectiveCommitView);
+  const contextSource = contextSourceForCommitView(effectiveCommitView);
   const readOnly =
     selectedTurn.id !== latestTurnId || isResolvableReviewStatus(selectedTurn.status);
   const showTurnHistory = shouldShowTurnHistory(record.turns);
@@ -543,11 +545,14 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
           {readOnly && !showTurnHistory ? <ReviewStateBanner record={displayRecord} /> : null}
           <DiffView
             activeFilePath={visibleActiveFilePath}
+            contextSource={contextSource}
             diff={activeDiff}
             emptyState={filteredEmptyState}
             files={filteredFiles}
             record={displayRecord}
             readOnly={readOnly}
+            reviewId={reviewId}
+            turnId={selectedTurn.id}
             viewedFiles={viewedFiles}
             wrapLines={wrapLines}
             onOpenFile={handleOpenFile}
@@ -1137,6 +1142,16 @@ function reviewScopeForCommitView(value: CommitView): ReviewScope {
   }
   if (value.mode === 'single') {
     return { mode: 'single', sha: value.sha };
+  }
+  return { mode: 'range', fromSha: value.fromSha, toSha: value.toSha };
+}
+
+function contextSourceForCommitView(value: CommitView): DiffContextSource {
+  if (value.mode === 'all') {
+    return { mode: 'turn' };
+  }
+  if (value.mode === 'single') {
+    return { mode: 'commit', sha: value.sha };
   }
   return { mode: 'range', fromSha: value.fromSha, toSha: value.toSha };
 }

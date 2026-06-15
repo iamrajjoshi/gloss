@@ -1,11 +1,40 @@
-import { CheckCircle2, MessageSquare, Plus } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
+  LoaderCircle,
+  MessageSquare,
+  Plus
+} from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { diffLineKey, diffLineNumber, diffLineSide } from '../../shared/diff-lines';
-import type { DiffFile, DiffLine, DiffPayload, ReviewRecord, Side } from '../../shared/types';
+import type {
+  DiffContextSource,
+  DiffFile,
+  DiffLine,
+  DiffPayload,
+  ReviewRecord,
+  Side
+} from '../../shared/types';
+import { fetchDiffContext } from '../api';
 import { useReviewStore } from '../store';
 import type { HighlightedDiffLines, SyntaxToken } from '../syntax';
 import { CommentComposer } from './CommentPopover';
+import {
+  buildContextGaps,
+  type ContextExpansionDirection,
+  contextExpansionDirectionForSegment,
+  contextExpansionRequest,
+  type DiffContextGap,
+  type DiffContextSegment,
+  type DiffContextStateByGap,
+  expandedContextSegments,
+  fileWithExpandedContext,
+  mergeContextLines,
+  visibleDiffLines
+} from './diff-context';
 import { fileCardElementId } from './diff-view-helpers';
 import { FileHeader } from './FileHeader';
 
@@ -21,29 +50,30 @@ interface SelectionRef {
   end: RowRef;
 }
 
-interface HighlightedFile {
-  file: DiffFile;
-  lines: HighlightedDiffLines | null;
-}
-
 export function DiffView({
   activeFilePath = null,
+  contextSource,
   emptyState = null,
   files,
   record,
   diff = record.diff,
   readOnly = false,
+  reviewId,
+  turnId,
   wrapLines = false,
   viewedFiles = new Set<string>(),
   onViewedChange = () => undefined,
   onOpenFile = () => undefined
 }: {
   activeFilePath?: string | null;
+  contextSource?: DiffContextSource;
   emptyState?: ReactNode;
   files?: DiffFile[];
   record: ReviewRecord;
   diff?: Pick<DiffPayload, 'files'>;
   readOnly?: boolean;
+  reviewId?: string;
+  turnId?: string;
   wrapLines?: boolean;
   viewedFiles?: Set<string>;
   onViewedChange?: (filePath: string, viewed: boolean) => void;
@@ -108,7 +138,19 @@ export function DiffView({
                   onOpenFile={() => onOpenFile(file.path)}
                 />
                 {collapsed ? null : (
-                  <DiffFileTable file={file} readOnly={readOnly} wrapLines={wrapLines} />
+                  <DiffFileTable
+                    contextSource={contextSource}
+                    file={file}
+                    key={`${file.oldPath ?? ''}:${file.path}:${contextKey(
+                      reviewId,
+                      turnId,
+                      contextSource
+                    )}`}
+                    readOnly={readOnly}
+                    reviewId={reviewId}
+                    turnId={turnId}
+                    wrapLines={wrapLines}
+                  />
                 )}
               </article>
             );
@@ -157,12 +199,18 @@ function EmptyDiff({ record }: { record: ReviewRecord }) {
 }
 
 function DiffFileTable({
+  contextSource,
   file,
   readOnly,
+  reviewId,
+  turnId,
   wrapLines
 }: {
+  contextSource?: DiffContextSource;
   file: DiffFile;
   readOnly: boolean;
+  reviewId?: string;
+  turnId?: string;
   wrapLines: boolean;
 }) {
   const comments = useReviewStore((state) => state.comments);
@@ -171,15 +219,25 @@ function DiffFileTable({
   const setDraft = useReviewStore((state) => state.setDraft);
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
-  const [highlightedFile, setHighlightedFile] = useState<HighlightedFile | null>(null);
+  const [highlightedLines, setHighlightedLines] = useState<HighlightedDiffLines | null>(null);
+  const [contextByGap, setContextByGap] = useState<DiffContextStateByGap>({});
   const selectionRef = useRef<SelectionRef | null>(null);
   const cleanupSelectionListeners = useRef<(() => void) | null>(null);
-  const visualIndexByLine = useMemo(() => buildVisualIndex(file), [file]);
+  const contextGaps = useMemo(() => buildContextGaps(file), [file]);
+  const contextGapByHunkIndex = useMemo(
+    () => new Map(contextGaps.map((gap) => [gap.beforeHunkIndex, gap])),
+    [contextGaps]
+  );
+  const expandedFile = useMemo(
+    () => fileWithExpandedContext(file, contextByGap),
+    [contextByGap, file]
+  );
+  const visibleLines = useMemo(() => visibleDiffLines(file, contextByGap), [contextByGap, file]);
+  const visualIndexByLine = useMemo(() => buildVisualIndex(visibleLines), [visibleLines]);
   const resolvedByCommentId = useMemo(
     () => new Map((resolution?.comments ?? []).map((comment) => [comment.commentId, comment])),
     [resolution]
   );
-  let previousNewEnd = 0;
 
   const fileComments = comments.filter((comment) => comment.filePath === file.path);
   const dragVisualRange =
@@ -190,14 +248,13 @@ function DiffFileTable({
     draft && draft.filePath === file.path
       ? visualRangeFor(visualIndexByLine, draft.side, draft.startLine, draft.endLine)
       : null;
-  const highlightedLines = highlightedFile?.file === file ? highlightedFile.lines : null;
-
   const openDraft = (selection: SelectionRef) => {
     const { start: row, end } = selection;
     const startLine = Math.min(row.line, end.line);
     const endLine = Math.max(row.line, end.line);
     const snippet =
-      collectVisualSnippet(file, visualIndexByLine, row.side, startLine, endLine) || row.snippet;
+      collectVisualSnippet(visibleLines, visualIndexByLine, row.side, startLine, endLine) ||
+      row.snippet;
     setDraft({
       filePath: file.path,
       side: row.side,
@@ -309,25 +366,177 @@ function DiffFileTable({
     setDragEnd(null);
   };
 
+  const expandContext = async (gap: DiffContextGap, direction: ContextExpansionDirection) => {
+    if (!reviewId || !contextSource) {
+      return;
+    }
+
+    const requestWindow = contextExpansionRequest(gap, contextByGap[gap.id], direction);
+    if (!requestWindow) {
+      return;
+    }
+
+    setContextByGap((current) => ({
+      ...current,
+      [gap.id]: {
+        lines: current[gap.id]?.lines ?? [],
+        loading: true,
+        error: null
+      }
+    }));
+
+    try {
+      const response = await fetchDiffContext({
+        reviewId,
+        filePath: gap.filePath,
+        oldPath: gap.oldPath,
+        turnId,
+        source: contextSource,
+        ...requestWindow
+      });
+      setContextByGap((current) => ({
+        ...current,
+        [gap.id]: mergeContextLines(gap, current[gap.id], response.lines)
+      }));
+    } catch (reason) {
+      setContextByGap((current) => ({
+        ...current,
+        [gap.id]: {
+          lines: current[gap.id]?.lines ?? [],
+          loading: false,
+          error: reason instanceof Error ? reason.message : String(reason)
+        }
+      }));
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     import('../syntax')
-      .then(({ highlightDiffFile }) => highlightDiffFile(file))
+      .then(({ highlightDiffFile }) => highlightDiffFile(expandedFile))
       .then((nextHighlightedLines) => {
         if (!cancelled) {
-          setHighlightedFile({ file, lines: nextHighlightedLines });
+          setHighlightedLines(nextHighlightedLines);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setHighlightedFile({ file, lines: null });
+          setHighlightedLines(null);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [file]);
+  }, [expandedFile]);
+
+  const renderDiffLine = (line: DiffLine, keyPrefix: string) => {
+    const side = diffLineSide(line);
+    const lineNumber = diffLineNumber(line);
+    if (lineNumber == null) {
+      return null;
+    }
+    const row: RowRef = {
+      filePath: file.path,
+      side,
+      line: lineNumber,
+      snippet: line.content
+    };
+    const visualIndex = visualIndexByLine.get(diffLineKey(side, lineNumber));
+    const activeVisualRange =
+      visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
+        ? dragVisualRange
+        : visualIndex != null && isInVisualRange(visualIndex, draftVisualRange)
+          ? draftVisualRange
+          : null;
+    const selectionClass =
+      visualIndex != null && activeVisualRange
+        ? selectionClassForLine(visualIndex, activeVisualRange.start, activeVisualRange.end)
+        : '';
+    const showDraftComposer =
+      draft && draft.filePath === file.path && draft.side === side && lineNumber === draft.endLine;
+    const rowComments = fileComments.filter(
+      (comment) =>
+        comment.side === side && lineNumber === Math.max(comment.startLine, comment.endLine)
+    );
+    return (
+      <div
+        key={`${keyPrefix}:${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
+      >
+        <div
+          className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
+          data-file-path={file.path}
+          data-line={lineNumber}
+          data-side={side}
+        >
+          {selectionClass ? <span className="selection-rail" aria-hidden="true" /> : null}
+          <div className="diff-gutter">
+            <span className="line-number old">{line.oldLine ?? ''}</span>
+            <span className="line-number new">{line.newLine ?? ''}</span>
+            <span className="marker">{markerForLine(line)}</span>
+            {!readOnly ? (
+              <button
+                aria-label={`Comment on ${file.path} line ${lineNumber}`}
+                className="comment-handle"
+                type="button"
+                onMouseDown={(event) => startSelection(row, event)}
+                onKeyDown={(event) => openSingleLineDraftFromKeyboard(row, event)}
+              >
+                <Plus size={16} strokeWidth={2.4} />
+              </button>
+            ) : null}
+          </div>
+          <CodeLine
+            content={line.content}
+            tokens={highlightedLines?.get(diffLineKey(side, lineNumber)) ?? null}
+          />
+        </div>
+        {rowComments.map((comment) => {
+          const resolvedComment = resolvedByCommentId.get(comment.id);
+          return (
+            <div
+              className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
+              key={comment.id}
+            >
+              {resolvedComment ? <CheckCircle2 size={14} /> : <MessageSquare size={14} />}
+              <span className="inline-comment-content">
+                {readOnly ? (
+                  <span className="inline-comment-status">
+                    {resolvedComment ? 'Resolved' : 'Open · Needs fix'}
+                  </span>
+                ) : null}
+                <span className="inline-comment-body">{comment.body}</span>
+                {resolvedComment?.summary ? (
+                  <span className="inline-comment-summary">{resolvedComment.summary}</span>
+                ) : null}
+              </span>
+            </div>
+          );
+        })}
+        {showDraftComposer && !readOnly ? <CommentComposer tone={line.type} /> : null}
+      </div>
+    );
+  };
+
+  const renderContextGap = (gap: DiffContextGap) =>
+    expandedContextSegments(gap, contextByGap[gap.id]).map((segment) => {
+      if (segment.type === 'lines') {
+        return segment.lines.map((line) => renderDiffLine(line, `context:${gap.id}`));
+      }
+      return (
+        <HiddenLinesControl
+          canExpand={Boolean(reviewId && contextSource)}
+          direction={contextExpansionDirectionForSegment(gap, segment)}
+          error={contextByGap[gap.id]?.error ?? null}
+          key={`hidden:${gap.id}:${segment.oldStart}:${segment.newStart}:${segment.lineCount}`}
+          loading={contextByGap[gap.id]?.loading ?? false}
+          segment={segment}
+          onExpand={(direction) => {
+            void expandContext(gap, direction);
+          }}
+        />
+      );
+    });
 
   return (
     <section
@@ -337,130 +546,90 @@ function DiffFileTable({
     >
       <div className={`diff-table ${dragStart ? 'selecting' : ''}`}>
         {file.isBinary ? <div className="binary-note">Binary file changed</div> : null}
-        {file.hunks.map((hunk) => {
-          const hidden =
-            hunk.newStart > previousNewEnd + 1 ? hunk.newStart - previousNewEnd - 1 : 0;
-          previousNewEnd = hunk.newStart + hunk.newLines - 1;
+        {file.hunks.map((hunk, hunkIndex) => {
+          const gap = contextGapByHunkIndex.get(hunkIndex);
           return (
             <div className="hunk" key={`${hunk.oldStart}:${hunk.newStart}`}>
-              {hidden > 0 ? (
-                <button className="hidden-lines" type="button">
-                  {hidden} unmodified lines
-                </button>
-              ) : null}
+              {gap ? renderContextGap(gap) : null}
               <div className="hunk-header">
                 {hunk.header ||
                   `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
               </div>
-              {hunk.lines.map((line) => {
-                const side = diffLineSide(line);
-                const lineNumber = diffLineNumber(line);
-                if (lineNumber == null) {
-                  return null;
-                }
-                const row: RowRef = {
-                  filePath: file.path,
-                  side,
-                  line: lineNumber,
-                  snippet: line.content
-                };
-                const visualIndex = visualIndexByLine.get(diffLineKey(side, lineNumber));
-                const activeVisualRange =
-                  visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
-                    ? dragVisualRange
-                    : visualIndex != null && isInVisualRange(visualIndex, draftVisualRange)
-                      ? draftVisualRange
-                      : null;
-                const selectionClass =
-                  visualIndex != null && activeVisualRange
-                    ? selectionClassForLine(
-                        visualIndex,
-                        activeVisualRange.start,
-                        activeVisualRange.end
-                      )
-                    : '';
-                const showDraftComposer =
-                  draft &&
-                  draft.filePath === file.path &&
-                  draft.side === side &&
-                  lineNumber === draft.endLine;
-                const rowComments = fileComments.filter(
-                  (comment) =>
-                    comment.side === side &&
-                    lineNumber === Math.max(comment.startLine, comment.endLine)
-                );
-                return (
-                  <div
-                    key={`${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
-                  >
-                    <div
-                      className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
-                      data-file-path={file.path}
-                      data-line={lineNumber}
-                      data-side={side}
-                    >
-                      {selectionClass ? (
-                        <span className="selection-rail" aria-hidden="true" />
-                      ) : null}
-                      <div className="diff-gutter">
-                        <span className="line-number old">{line.oldLine ?? ''}</span>
-                        <span className="line-number new">{line.newLine ?? ''}</span>
-                        <span className="marker">{markerForLine(line)}</span>
-                        {!readOnly ? (
-                          <button
-                            aria-label={`Comment on ${file.path} line ${lineNumber}`}
-                            className="comment-handle"
-                            type="button"
-                            onMouseDown={(event) => startSelection(row, event)}
-                            onKeyDown={(event) => openSingleLineDraftFromKeyboard(row, event)}
-                          >
-                            <Plus size={16} strokeWidth={2.4} />
-                          </button>
-                        ) : null}
-                      </div>
-                      <CodeLine
-                        content={line.content}
-                        tokens={highlightedLines?.get(diffLineKey(side, lineNumber)) ?? null}
-                      />
-                    </div>
-                    {rowComments.map((comment) => {
-                      const resolvedComment = resolvedByCommentId.get(comment.id);
-                      return (
-                        <div
-                          className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
-                          key={comment.id}
-                        >
-                          {resolvedComment ? (
-                            <CheckCircle2 size={14} />
-                          ) : (
-                            <MessageSquare size={14} />
-                          )}
-                          <span className="inline-comment-content">
-                            {readOnly ? (
-                              <span className="inline-comment-status">
-                                {resolvedComment ? 'Resolved' : 'Open · Needs fix'}
-                              </span>
-                            ) : null}
-                            <span className="inline-comment-body">{comment.body}</span>
-                            {resolvedComment?.summary ? (
-                              <span className="inline-comment-summary">
-                                {resolvedComment.summary}
-                              </span>
-                            ) : null}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {showDraftComposer && !readOnly ? <CommentComposer tone={line.type} /> : null}
-                  </div>
-                );
-              })}
+              {hunk.lines.map((line) => renderDiffLine(line, 'hunk'))}
             </div>
           );
         })}
       </div>
     </section>
   );
+}
+
+function HiddenLinesControl({
+  canExpand,
+  direction,
+  error,
+  loading,
+  segment,
+  onExpand
+}: {
+  canExpand: boolean;
+  direction: ContextExpansionDirection;
+  error: string | null;
+  loading: boolean;
+  segment: Extract<DiffContextSegment, { type: 'hidden' }>;
+  onExpand: (direction: ContextExpansionDirection) => void;
+}) {
+  const disabled = !canExpand || Boolean(loading);
+  const label = hiddenContextLabel(direction);
+  return (
+    <div className="hidden-lines">
+      <div className="hidden-lines-main">
+        <span className="hidden-lines-count">
+          {loading ? (
+            <>
+              <LoaderCircle className="spin" size={14} />
+              Loading context
+            </>
+          ) : (
+            `${segment.lineCount} unmodified ${segment.lineCount === 1 ? 'line' : 'lines'}`
+          )}
+        </span>
+        <div className="hidden-lines-actions">
+          <button
+            aria-label={label}
+            className="hidden-lines-action"
+            disabled={disabled}
+            title={label}
+            type="button"
+            onClick={() => onExpand(direction)}
+          >
+            <HiddenContextIcon direction={direction} />
+          </button>
+        </div>
+      </div>
+      {error ? <div className="hidden-lines-error">{error}</div> : null}
+    </div>
+  );
+}
+
+function hiddenContextLabel(direction: ContextExpansionDirection): string {
+  if (direction === 'up') {
+    return 'Expand hidden context upward';
+  }
+  if (direction === 'down') {
+    return 'Expand hidden context downward';
+  }
+  return 'Expand hidden context';
+}
+
+function HiddenContextIcon({ direction }: { direction: ContextExpansionDirection }) {
+  if (direction === 'up') {
+    return <ChevronUp size={15} />;
+  }
+  if (direction === 'down') {
+    return <ChevronDown size={15} />;
+  }
+  return <ChevronsUpDown size={15} />;
 }
 
 function CodeLine({ content, tokens }: { content: string; tokens: SyntaxToken[] | null }) {
@@ -526,17 +695,32 @@ function selectionClassForLine(lineNumber: number, startLine: number, endLine: n
   return 'range-selected range-middle';
 }
 
-function buildVisualIndex(file: DiffFile): Map<string, number> {
+function contextKey(
+  reviewId: string | undefined,
+  turnId: string | undefined,
+  source: DiffContextSource | undefined
+): string {
+  if (!reviewId || !source) {
+    return '';
+  }
+  if (source.mode === 'turn') {
+    return `${reviewId}:${turnId ?? ''}:turn`;
+  }
+  if (source.mode === 'commit') {
+    return `${reviewId}:${turnId ?? ''}:commit:${source.sha}`;
+  }
+  return `${reviewId}:${turnId ?? ''}:range:${source.fromSha}:${source.toSha}`;
+}
+
+function buildVisualIndex(lines: DiffLine[]): Map<string, number> {
   const indexByLine = new Map<string, number>();
   let visualIndex = 0;
-  for (const hunk of file.hunks) {
-    for (const line of hunk.lines) {
-      const side = diffLineSide(line);
-      const lineNumber = diffLineNumber(line);
-      if (lineNumber != null) {
-        indexByLine.set(diffLineKey(side, lineNumber), visualIndex);
-        visualIndex += 1;
-      }
+  for (const line of lines) {
+    const side = diffLineSide(line);
+    const lineNumber = diffLineNumber(line);
+    if (lineNumber != null) {
+      indexByLine.set(diffLineKey(side, lineNumber), visualIndex);
+      visualIndex += 1;
     }
   }
   return indexByLine;
@@ -564,7 +748,7 @@ function isInVisualRange(index: number, range: { start: number; end: number } | 
 }
 
 function collectVisualSnippet(
-  file: DiffFile,
+  lines: DiffLine[],
   indexByLine: Map<string, number>,
   side: Side,
   startLine: number,
@@ -575,19 +759,15 @@ function collectVisualSnippet(
   if (!range) {
     return '';
   }
-  let visualIndex = 0;
 
-  for (const hunk of file.hunks) {
-    for (const line of hunk.lines) {
-      if (diffLineNumber(line) == null) {
-        continue;
-      }
-      if (visualIndex >= range.start && visualIndex <= range.end) {
-        selectedLines.push(line);
-      }
-      visualIndex += 1;
+  lines.forEach((line, visualIndex) => {
+    if (diffLineNumber(line) == null) {
+      return;
     }
-  }
+    if (visualIndex >= range.start && visualIndex <= range.end) {
+      selectedLines.push(line);
+    }
+  });
 
   const hasMixedLineTypes = new Set(selectedLines.map((line) => line.type)).size > 1;
   return selectedLines
