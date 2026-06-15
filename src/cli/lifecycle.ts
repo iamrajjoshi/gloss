@@ -406,7 +406,7 @@ export async function listGlossDaemonPids(): Promise<number[]> {
   return (await listGlossDaemonProcesses()).map((processInfo) => processInfo.pid);
 }
 
-export async function listGlossDaemonProcesses(): Promise<GlossDaemonProcess[]> {
+async function listGlossDaemonProcesses(): Promise<GlossDaemonProcess[]> {
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync('ps', ['-axo', 'pid=,user=,command=', '-ww']));

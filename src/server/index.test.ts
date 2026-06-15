@@ -17,6 +17,7 @@ import {
   isCommitRangeDiffResponse,
   isCreateReviewResponse,
   isCreateReviewTurnResponse,
+  isDiffContextResponse,
   isHealthResponse,
   isListReviewsResponse,
   isOpenFileResponse,
@@ -435,7 +436,8 @@ describe('Gloss review API global persistence', () => {
       rawDiff: 'diff --git a/api.ts b/api.ts\n',
       files: [makeApiDiff().files[0], { ...makeApiDiff().files[0], path: 'second.ts' }]
     }));
-    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff }));
+    const captureDiffContext = vi.fn();
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff, captureDiffContext }));
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const diff = makeApiDiffWithCommits();
@@ -476,7 +478,8 @@ describe('Gloss review API global persistence', () => {
 
   it('rejects invalid commit range requests', async () => {
     const captureCommitRangeDiff = vi.fn();
-    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff }));
+    const captureDiffContext = vi.fn();
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff, captureDiffContext }));
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const noCommitsCreatedResponse = await app.request('/api/reviews', {
@@ -527,6 +530,239 @@ describe('Gloss review API global persistence', () => {
     expect(unknownResponse.status).toBe(404);
     expect(reversedResponse.status).toBe(400);
     expect(captureCommitRangeDiff).not.toHaveBeenCalled();
+  });
+
+  it('returns context lines for a valid turn diff file', async () => {
+    const contextResponse = {
+      filePath: 'api.ts',
+      oldStart: 4,
+      newStart: 4,
+      lines: [{ type: 'context' as const, oldLine: 4, newLine: 4, content: 'const api = true;' }]
+    };
+    const captureCommitRangeDiff = vi.fn();
+    const captureDiffContext = vi.fn(async () => contextResponse);
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff, captureDiffContext }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const diff = makeApiDiff();
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const contextApiResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        oldStart: 4,
+        newStart: 4,
+        lineCount: 1
+      })
+    });
+    const context = await responseJson(
+      contextApiResponse,
+      isDiffContextResponse,
+      'diff context response'
+    );
+
+    expect(contextApiResponse.status).toBe(200);
+    expect(context).toEqual(contextResponse);
+    expect(captureDiffContext).toHaveBeenCalledWith({
+      filePath: 'api.ts',
+      oldPath: null,
+      oldRef: diff.base.sha,
+      newRef: diff.scope.comparison.sha,
+      oldStart: 4,
+      newStart: 4,
+      lineCount: 1,
+      repoRoot
+    });
+  });
+
+  it('returns context lines for valid commit and range sources', async () => {
+    const commitContext = {
+      filePath: 'api.ts',
+      oldStart: 2,
+      newStart: 2,
+      lines: [{ type: 'context' as const, oldLine: 2, newLine: 2, content: 'commit context' }]
+    };
+    const rangeContext = {
+      filePath: 'api.ts',
+      oldStart: 3,
+      newStart: 3,
+      lines: [{ type: 'context' as const, oldLine: 3, newLine: 3, content: 'range context' }]
+    };
+    const captureCommitRangeDiff = vi.fn(async () => ({
+      stats: { files: 1, additions: 1, deletions: 0 },
+      rawDiff: 'diff --git a/api.ts b/api.ts\n',
+      files: [makeApiDiff().files[0]]
+    }));
+    const captureDiffContext = vi
+      .fn()
+      .mockResolvedValueOnce(commitContext)
+      .mockResolvedValueOnce(rangeContext);
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff, captureDiffContext }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const diff = makeApiDiffWithCommits();
+    const fromSha = diff.commitDiffs?.[0]?.commit.sha ?? '';
+    const toSha = diff.commitDiffs?.[1]?.commit.sha ?? '';
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const commitResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'commit', sha: fromSha },
+        oldStart: 2,
+        newStart: 2,
+        lineCount: 1
+      })
+    });
+    const rangeResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'range', fromSha, toSha },
+        oldStart: 3,
+        newStart: 3,
+        lineCount: 1
+      })
+    });
+
+    expect(commitResponse.status).toBe(200);
+    expect(await responseJson(commitResponse, isDiffContextResponse, 'commit context')).toEqual(
+      commitContext
+    );
+    expect(rangeResponse.status).toBe(200);
+    expect(await responseJson(rangeResponse, isDiffContextResponse, 'range context')).toEqual(
+      rangeContext
+    );
+    expect(captureCommitRangeDiff).toHaveBeenCalledWith(fromSha, toSha, repoRoot);
+    expect(captureDiffContext).toHaveBeenNthCalledWith(1, {
+      filePath: 'api.ts',
+      oldPath: null,
+      oldRef: `${fromSha}^`,
+      newRef: fromSha,
+      oldStart: 2,
+      newStart: 2,
+      lineCount: 1,
+      repoRoot
+    });
+    expect(captureDiffContext).toHaveBeenNthCalledWith(2, {
+      filePath: 'api.ts',
+      oldPath: null,
+      oldRef: `${fromSha}^`,
+      newRef: toSha,
+      oldStart: 3,
+      newStart: 3,
+      lineCount: 1,
+      repoRoot
+    });
+  });
+
+  it('rejects invalid context requests before reading git content', async () => {
+    const captureCommitRangeDiff = vi.fn();
+    const captureDiffContext = vi.fn();
+    vi.doMock('../shared/git-diff', () => ({ captureCommitRangeDiff, captureDiffContext }));
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const diff = makeApiDiffWithCommits();
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const fromSha = diff.commitDiffs?.[0]?.commit.sha ?? '';
+    const toSha = diff.commitDiffs?.[1]?.commit.sha ?? '';
+    const baseRequest = {
+      filePath: 'api.ts',
+      oldPath: null,
+      turnId: created.turn?.id,
+      source: { mode: 'turn' },
+      oldStart: 1,
+      newStart: 1,
+      lineCount: 1
+    };
+
+    const unknownFileResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...baseRequest, filePath: 'missing.ts' })
+    });
+    const invalidTurnResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...baseRequest, turnId: 'missing-turn' })
+    });
+    const invalidCommitResponse = await app.request(
+      `/api/reviews/${created.meta.id}/files/context`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...baseRequest, source: { mode: 'commit', sha: 'missing' } })
+      }
+    );
+    const reversedRangeResponse = await app.request(
+      `/api/reviews/${created.meta.id}/files/context`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...baseRequest,
+          source: { mode: 'range', fromSha: toSha, toSha: fromSha }
+        })
+      }
+    );
+    const traversalResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...baseRequest, filePath: '../api.ts' })
+    });
+    const excessiveResponse = await app.request(`/api/reviews/${created.meta.id}/files/context`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...baseRequest, lineCount: 501 })
+    });
+
+    expect(unknownFileResponse.status).toBe(404);
+    expect(invalidTurnResponse.status).toBe(404);
+    expect(invalidCommitResponse.status).toBe(404);
+    expect(reversedRangeResponse.status).toBe(400);
+    expect(traversalResponse.status).toBe(400);
+    expect(excessiveResponse.status).toBe(400);
+    expect(captureCommitRangeDiff).not.toHaveBeenCalled();
+    expect(captureDiffContext).not.toHaveBeenCalled();
   });
 
   it('opens files that are present only in per-commit diffs', async () => {

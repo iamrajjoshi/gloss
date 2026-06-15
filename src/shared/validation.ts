@@ -10,6 +10,9 @@ import type {
   CreateReviewResponse,
   CreateReviewTurnResponse,
   DiffCommit,
+  DiffContextRequest,
+  DiffContextResponse,
+  DiffContextSource,
   DiffFile,
   DiffHunk,
   DiffLine,
@@ -183,6 +186,29 @@ export function isCommitRangeDiffResponse(value: unknown): value is CommitRangeD
     isDiffStats(value.stats) &&
     isString(value.rawDiff) &&
     isArrayOf(value.files, isDiffFile)
+  );
+}
+
+export function isDiffContextRequest(value: unknown): value is DiffContextRequest {
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isNullableString(value.oldPath) &&
+    isOptionalString(value.turnId) &&
+    isDiffContextSource(value.source) &&
+    isPositiveInteger(value.oldStart) &&
+    isPositiveInteger(value.newStart) &&
+    isPositiveInteger(value.lineCount)
+  );
+}
+
+export function isDiffContextResponse(value: unknown): value is DiffContextResponse {
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isPositiveInteger(value.oldStart) &&
+    isPositiveInteger(value.newStart) &&
+    isArrayOf(value.lines, isDiffLine)
   );
 }
 
@@ -439,6 +465,22 @@ function isCommitDiff(value: unknown): value is CommitDiff {
   );
 }
 
+function isDiffContextSource(value: unknown): value is DiffContextSource {
+  if (!isRecord(value) || !isString(value.mode)) {
+    return false;
+  }
+  switch (value.mode) {
+    case 'turn':
+      return true;
+    case 'commit':
+      return isString(value.sha);
+    case 'range':
+      return isString(value.fromSha) && isString(value.toSha);
+    default:
+      return false;
+  }
+}
+
 function isReviewScope(value: unknown): value is ReviewScope {
   if (!isRecord(value) || !isOneOf(value.mode, REVIEW_SCOPE_MODES)) {
     return false;
@@ -561,6 +603,10 @@ function isNullableString(value: unknown): value is string | null {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return isNumber(value) && Number.isInteger(value) && value > 0;
 }
 
 function isOptionalNumber(value: unknown): value is number | undefined {

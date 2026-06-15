@@ -1502,13 +1502,70 @@ pre {
 }
 
 .hidden-lines {
-  display: block;
-  padding: 7px var(--spacing-16);
+  display: grid;
+  grid-template-columns: 140px minmax(680px, 1fr);
+  min-height: 28px;
+  padding: 0;
+}
+
+.hidden-lines-main {
+  display: contents;
+}
+
+.hidden-lines-count {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 var(--spacing-16);
+  border-left: 1px solid var(--ide-border);
+  background: var(--ide-accent-muted);
+}
+
+.hidden-lines-actions {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  background: var(--ide-accent);
+}
+
+.hidden-lines-action {
+  display: inline-flex;
+  width: 100%;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: white;
   cursor: pointer;
 }
 
-.hidden-lines:hover {
-  color: var(--ide-accent);
+.hidden-lines-action:hover,
+.hidden-lines-action:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  color: white;
+}
+
+.hidden-lines-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.hidden-lines-error {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 0 var(--spacing-16) 6px;
+  background: var(--ide-accent-muted);
+  color: var(--ide-danger);
+  font-size: 12px;
 }
 
 .binary-note {
@@ -1762,6 +1819,10 @@ pre {
 }
 
 .diff-scroller.wrap-lines .diff-row {
+  grid-template-columns: 140px minmax(0, 1fr);
+}
+
+.diff-scroller.wrap-lines .hidden-lines {
   grid-template-columns: 140px minmax(0, 1fr);
 }
 
@@ -3312,11 +3373,19 @@ pre {
   }
 
   .diff-row {
-    grid-template-columns: 46px 46px 22px minmax(520px, max-content);
+    grid-template-columns: 114px minmax(520px, max-content);
   }
 
   .diff-scroller.wrap-lines .diff-row {
-    grid-template-columns: 46px 46px 22px minmax(0, 1fr);
+    grid-template-columns: 114px minmax(0, 1fr);
+  }
+
+  .hidden-lines {
+    grid-template-columns: 114px minmax(520px, 1fr);
+  }
+
+  .diff-scroller.wrap-lines .hidden-lines {
+    grid-template-columns: 114px minmax(0, 1fr);
   }
 
   .inline-comment {
