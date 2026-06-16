@@ -4,10 +4,10 @@
 
 # Gloss
 
-[![Release](https://img.shields.io/github/v/release/iamrajjoshi/gloss?display_name=tag&sort=semver)](https://github.com/iamrajjoshi/gloss/releases)
+[![Release](https://img.shields.io/npm/v/getgloss?label=release&color=2f81f7)](https://github.com/iamrajjoshi/gloss/releases)
 [![npm](https://img.shields.io/npm/v/getgloss?color=cb3837)](https://www.npmjs.com/package/getgloss)
 [![CI](https://github.com/iamrajjoshi/gloss/actions/workflows/ci.yml/badge.svg)](https://github.com/iamrajjoshi/gloss/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/iamrajjoshi/gloss)](https://github.com/iamrajjoshi/gloss/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 Gloss is a local browser review loop for coding agents. It captures your current
 git diff, opens a localhost review UI, lets you attach comments to changed
