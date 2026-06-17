@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight, ExternalLink, FileCode2, MoreHorizontal } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, MoreHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { DiffFile } from '../../shared/types';
+import { LanguageIcon } from './LanguageIcon';
 
 export function FileHeader({
   file,
@@ -48,7 +49,7 @@ export function FileHeader({
     <div className="file-header">
       <button className="file-header-toggle" type="button" onClick={onToggle}>
         {collapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
-        <FileCode2 size={17} />
+        <LanguageIcon isBinary={file.isBinary} language={file.language} />
         <span className="file-path">{file.path}</span>
         {file.oldPath && file.oldPath !== file.path ? (
           <span className="rename-path">from {file.oldPath}</span>

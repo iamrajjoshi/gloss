@@ -1506,6 +1506,22 @@ pre {
   text-align: left;
 }
 
+.file-language-icon {
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  align-items: center;
+  justify-content: center;
+  color: var(--ide-fg-muted);
+}
+
+.file-language-icon svg {
+  display: block;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+}
+
 .file-path,
 .rename-path {
   overflow: hidden;
