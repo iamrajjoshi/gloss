@@ -14,11 +14,13 @@ import tsx from '@shikijs/langs/tsx';
 import typescript from '@shikijs/langs/typescript';
 import yaml from '@shikijs/langs/yaml';
 import githubDarkDefault from '@shikijs/themes/github-dark-default';
+import githubLightDefault from '@shikijs/themes/github-light-default';
 import { createHighlighterCore, type HighlighterCore, type ThemedToken } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import wasm from 'shiki/wasm';
 import { diffLineKey, diffLineNumber, diffLineSide } from '../shared/diff-lines';
 import type { DiffFile } from '../shared/types';
+import type { ResolvedTheme } from './theme';
 
 export interface SyntaxToken {
   color?: string;
@@ -29,7 +31,10 @@ export interface SyntaxToken {
 
 export type HighlightedDiffLines = Map<string, SyntaxToken[]>;
 
-const diffTheme = 'github-dark-default';
+const diffThemeByResolvedTheme: Record<ResolvedTheme, string> = {
+  dark: 'github-dark-default',
+  light: 'github-light-default'
+};
 const supportedLanguages = [
   bash,
   css,
@@ -72,7 +77,10 @@ export function shikiLanguageForGlossLanguage(language: string | null): string |
   return language ? (shikiLanguageByGlossLanguage[language] ?? null) : null;
 }
 
-export async function highlightDiffFile(file: DiffFile): Promise<HighlightedDiffLines | null> {
+export async function highlightDiffFile(
+  file: DiffFile,
+  theme: ResolvedTheme = 'dark'
+): Promise<HighlightedDiffLines | null> {
   const language = shikiLanguageForGlossLanguage(file.language);
   if (!language || file.isBinary) {
     return null;
@@ -86,7 +94,7 @@ export async function highlightDiffFile(file: DiffFile): Promise<HighlightedDiff
       hunk.lines.map((line) => line.content).join('\n'),
       {
         lang: language,
-        theme: diffTheme
+        theme: diffThemeByResolvedTheme[theme]
       }
     ).tokens;
 
@@ -108,7 +116,7 @@ export async function highlightDiffFile(file: DiffFile): Promise<HighlightedDiff
 
 function getDiffHighlighter(): Promise<HighlighterCore> {
   highlighterPromise ??= createHighlighterCore({
-    themes: [githubDarkDefault],
+    themes: [githubDarkDefault, githubLightDefault],
     langs: supportedLanguages,
     engine: createOnigurumaEngine(wasm)
   });

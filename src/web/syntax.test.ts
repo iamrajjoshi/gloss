@@ -56,9 +56,11 @@ describe('highlightDiffFile', () => {
       ]
     };
 
-    const highlighted = await highlightDiffFile(file);
+    const highlighted = await highlightDiffFile(file, 'dark');
+    const lightHighlighted = await highlightDiffFile(file, 'light');
 
     expect(highlighted).not.toBeNull();
+    expect(lightHighlighted).not.toBeNull();
     expect(
       highlighted
         ?.get(diffLineKey('R', 1))
@@ -78,6 +80,16 @@ describe('highlightDiffFile', () => {
         .join('')
     ).toBe('const newName = 1;');
     expect(highlighted?.get(diffLineKey('R', 2))?.some((token) => token.color)).toBe(true);
+    expect(
+      lightHighlighted
+        ?.get(diffLineKey('R', 2))
+        ?.map((token) => token.content)
+        .join('')
+    ).toBe('const newName = 1;');
+    expect(lightHighlighted?.get(diffLineKey('R', 2))?.some((token) => token.color)).toBe(true);
+    expect(firstTokenColor(lightHighlighted?.get(diffLineKey('R', 2)) ?? [])).not.toBe(
+      firstTokenColor(highlighted?.get(diffLineKey('R', 2)) ?? [])
+    );
   });
 
   it('falls back for unsupported languages and binary files', async () => {
@@ -107,3 +119,7 @@ describe('highlightDiffFile', () => {
     expect(await highlightDiffFile({ ...file, language: 'ts', isBinary: true })).toBeNull();
   });
 });
+
+function firstTokenColor(tokens: Array<{ color?: string }>): string | null {
+  return tokens.find((token) => token.color)?.color ?? null;
+}

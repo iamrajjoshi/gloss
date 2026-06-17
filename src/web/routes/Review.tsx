@@ -7,8 +7,11 @@ import {
   GitBranch,
   GitCommitHorizontal,
   LoaderCircle,
+  Monitor,
+  Moon,
   MoveHorizontal,
   PanelLeftOpen,
+  Sun,
   WrapText,
   X
 } from 'lucide-react';
@@ -36,6 +39,7 @@ import { FileTree } from '../components/FileTree';
 import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-helpers';
 import { SubmitBar } from '../components/SubmitBar';
 import { useReviewStore } from '../store';
+import { type ThemePreference, useTheme } from '../theme';
 import { loadViewedFiles, saveViewedFiles } from '../viewed-files';
 import { shouldReloadReviewForEvent } from './review-events';
 import { type FileFilterState, selectedExtensionIdsForFilterState } from './review-filter';
@@ -99,6 +103,41 @@ const RELATIVE_TIME_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
 
 export function Review({ reviewId }: { reviewId: string }) {
   return <ReviewContent key={reviewId} reviewId={reviewId} />;
+}
+
+function ThemePreferenceControl() {
+  const { preference, setPreference } = useTheme();
+  const options: Array<{
+    icon: typeof Monitor;
+    label: string;
+    value: ThemePreference;
+  }> = [
+    { icon: Monitor, label: 'Match system theme', value: 'system' },
+    { icon: Sun, label: 'Use light theme', value: 'light' },
+    { icon: Moon, label: 'Use dark theme', value: 'dark' }
+  ];
+
+  return (
+    <fieldset className="theme-toggle">
+      <legend className="sr-only">Theme</legend>
+      {options.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button
+            aria-label={option.label}
+            aria-pressed={preference === option.value}
+            className="theme-toggle-option"
+            key={option.value}
+            title={option.label}
+            type="button"
+            onClick={() => setPreference(option.value)}
+          >
+            <Icon size={15} />
+          </button>
+        );
+      })}
+    </fieldset>
+  );
 }
 
 function scrollToFile(filePath: string) {
@@ -485,6 +524,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
             >
               {wrapLines ? <MoveHorizontal size={16} /> : <WrapText size={16} />}
             </button>
+            <ThemePreferenceControl />
             {branchPill ? (
               <div className="branch-pill" title={branchPill.title}>
                 <GitBranch size={16} />

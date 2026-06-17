@@ -28,6 +28,22 @@
       content="Comment on local code diffs and save feedback in your repo."
     />
     <meta name="twitter:image" content="https://getgloss.dev/og.png" />
+    <script>
+      (() => {
+        try {
+          const preference = window.localStorage.getItem("gloss:theme-preference");
+          const storedTheme = preference === "light" || preference === "dark" ? preference : null;
+          const mediaQuery =
+            typeof window.matchMedia === "function"
+              ? window.matchMedia("(prefers-color-scheme: dark)")
+              : null;
+          const systemTheme = mediaQuery?.matches ? "dark" : "light";
+          document.documentElement.dataset.theme = storedTheme ?? systemTheme;
+        } catch {
+          // Fall back to the default CSS theme when storage or matchMedia is unavailable.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
