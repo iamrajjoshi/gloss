@@ -21,6 +21,7 @@ import type {
 import { fetchDiffContext } from '../api';
 import { useReviewStore } from '../store';
 import type { HighlightedDiffLines, SyntaxToken } from '../syntax';
+import { useTheme } from '../theme';
 import { CommentComposer } from './CommentPopover';
 import {
   buildContextGaps,
@@ -217,6 +218,7 @@ function DiffFileTable({
   const resolution = useReviewStore((state) => state.resolution);
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
+  const { resolvedTheme } = useTheme();
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
   const [highlightedLines, setHighlightedLines] = useState<HighlightedDiffLines | null>(null);
@@ -413,7 +415,7 @@ function DiffFileTable({
   useEffect(() => {
     let cancelled = false;
     import('../syntax')
-      .then(({ highlightDiffFile }) => highlightDiffFile(expandedFile))
+      .then(({ highlightDiffFile }) => highlightDiffFile(expandedFile, resolvedTheme))
       .then((nextHighlightedLines) => {
         if (!cancelled) {
           setHighlightedLines(nextHighlightedLines);
@@ -428,7 +430,7 @@ function DiffFileTable({
     return () => {
       cancelled = true;
     };
-  }, [expandedFile]);
+  }, [expandedFile, resolvedTheme]);
 
   const renderDiffLine = (line: DiffLine, keyPrefix: string) => {
     const side = diffLineSide(line);
