@@ -818,31 +818,15 @@ function SourcePeekText({
           tabIndex={-1}
           type="button"
           onClick={(event) => {
-            if (!event.metaKey && !event.ctrlKey) {
-              return;
-            }
-            event.preventDefault();
-            event.stopPropagation();
-            onSourcePeek(identifier, column);
-          }}
-          onContextMenu={(event) => {
-            if (!event.ctrlKey) {
-              return;
-            }
             event.preventDefault();
             event.stopPropagation();
             onSourcePeek(identifier, column);
           }}
           onMouseDown={(event) => {
-            if (event.metaKey || event.ctrlKey) {
-              event.preventDefault();
-            }
+            event.preventDefault();
           }}
           onKeyDown={(event) => {
-            if (
-              (event.key !== 'Enter' && event.key !== ' ') ||
-              (!event.metaKey && !event.ctrlKey)
-            ) {
+            if (event.key !== 'Enter' && event.key !== ' ') {
               return;
             }
             event.preventDefault();
