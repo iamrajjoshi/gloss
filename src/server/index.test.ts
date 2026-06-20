@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,13 +11,14 @@ import {
   globalReviewTurnMetaFile,
   globalReviewTurnResolvedFile
 } from '../shared/paths';
-import type { ReviewEvent } from '../shared/types';
+import { type ReviewEvent, SOURCE_PEEK_MAX_BYTES } from '../shared/types';
 import {
   isClearReviewsResult,
   isCommitRangeDiffResponse,
   isCreateReviewResponse,
   isCreateReviewTurnResponse,
   isDiffContextResponse,
+  isFileContentResponse,
   isHealthResponse,
   isListReviewsResponse,
   isOpenFileResponse,
@@ -25,6 +26,7 @@ import {
   isResolveResult,
   isReviewEvent,
   isReviewRecord,
+  isSourcePeekResponse,
   type JsonGuard,
   parseJson,
   parseJsonValue
@@ -34,6 +36,14 @@ import { makeComment, makeDiff } from '../test/factories';
 const originalStateDir = process.env.GLOSS_STATE_DIR;
 let tempDirs: string[] = [];
 let repoRoot = '';
+
+function mockLocalOpen(
+  openLocalPath = vi.fn(async (_filePath: string, _target?: string) => undefined)
+) {
+  const availableOpenFileTargets = vi.fn(async () => [{ label: 'Default app', target: 'default' }]);
+  vi.doMock('./local-open', () => ({ availableOpenFileTargets, openLocalPath }));
+  return { availableOpenFileTargets, openLocalPath };
+}
 
 beforeEach(async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'gloss-api-state-'));
@@ -401,8 +411,7 @@ describe('Gloss review API global persistence', () => {
   });
 
   it('opens changed files locally after validating the review path', async () => {
-    const openLocalPath = vi.fn(async (_filePath: string) => undefined);
-    vi.doMock('./local-open', () => ({ openLocalPath }));
+    const { openLocalPath } = mockLocalOpen();
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
@@ -428,6 +437,66 @@ describe('Gloss review API global persistence', () => {
     expect(openResponse.status).toBe(200);
     expect(opened).toEqual({ ok: true, path: expectedPath });
     expect(openLocalPath).toHaveBeenCalledWith(expectedPath);
+  });
+
+  it('opens repo files outside the diff when requested explicitly', async () => {
+    const { openLocalPath } = mockLocalOpen();
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await mkdir(path.join(repoRoot, 'lib'), { recursive: true });
+    await writeFile(path.join(repoRoot, 'lib', 'helper.ts'), 'export const helper = true;\n');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const openResponse = await app.request(`/api/reviews/${created.meta.id}/files/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'lib/helper.ts', scope: 'repo', target: 'vscode' })
+    });
+    const opened = await responseJson(openResponse, isOpenFileResponse, 'open file response');
+    const expectedPath = await realpath(path.join(repoRoot, 'lib', 'helper.ts'));
+
+    expect(openResponse.status).toBe(200);
+    expect(opened).toEqual({ ok: true, path: expectedPath });
+    expect(openLocalPath).toHaveBeenCalledWith(expectedPath, 'vscode');
+  });
+
+  it('returns changed file contents after validating the review path', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const contentResponse = await app.request(`/api/reviews/${created.meta.id}/files/content`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ filePath: 'api.ts' })
+    });
+    const content = await responseJson(
+      contentResponse,
+      isFileContentResponse,
+      'file content response'
+    );
+
+    expect(contentResponse.status).toBe(200);
+    expect(content).toEqual({ content: 'export const api = true;\n', filePath: 'api.ts' });
   });
 
   it('returns a combined diff for a valid commit range', async () => {
@@ -765,9 +834,167 @@ describe('Gloss review API global persistence', () => {
     expect(captureDiffContext).not.toHaveBeenCalled();
   });
 
+  it('peeks definitions through aliased named imports', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await mkdir(path.join(repoRoot, 'lib'), { recursive: true });
+    await writeFile(
+      path.join(repoRoot, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@lib/*': ['lib/*'] } } })
+    );
+    await writeFile(
+      path.join(repoRoot, 'api.ts'),
+      [
+        "import './setup';",
+        "import { helper as useHelper } from '@lib/helper';",
+        'export const value = useHelper();',
+        ''
+      ].join('\n')
+    );
+    await writeFile(path.join(repoRoot, 'setup.ts'), 'export const loaded = true;\n');
+    await writeFile(
+      path.join(repoRoot, 'lib/helper.ts'),
+      ['export function helper() {', "  return 'ready';", '}', ''].join('\n')
+    );
+    const diff = makeApiDiff({ code: 'export const value = useHelper();' });
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const peekResponse = await app.request(`/api/reviews/${created.meta.id}/source-peek`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        side: 'R',
+        line: 3,
+        column: 'export const value = '.length,
+        symbol: 'useHelper'
+      })
+    });
+    const peek = await responseJson(peekResponse, isSourcePeekResponse, 'source peek response');
+
+    expect(peekResponse.status).toBe(200);
+    expect(peek).toMatchObject({
+      symbol: 'useHelper',
+      targetSymbol: 'helper',
+      filePath: 'lib/helper.ts',
+      startLine: 1,
+      line: 1,
+      column: 16,
+      language: 'ts',
+      truncated: false,
+      matchReason: 'import'
+    });
+    expect(peek.content).toContain('export function helper()');
+  });
+
+  it('peeks definitions through namespace import members', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await mkdir(path.join(repoRoot, 'lib'), { recursive: true });
+    await writeFile(
+      path.join(repoRoot, 'api.ts'),
+      [
+        "import * as helpers from './lib/helper';",
+        'export const value = helpers.helper();',
+        ''
+      ].join('\n')
+    );
+    await writeFile(
+      path.join(repoRoot, 'lib/helper.ts'),
+      ['export const helper = () => {', "  return 'ready';", '};', ''].join('\n')
+    );
+    const diff = makeApiDiff({ code: 'export const value = helpers.helper();' });
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(diff)
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const line = 'export const value = helpers.helper();';
+
+    const peekResponse = await app.request(`/api/reviews/${created.meta.id}/source-peek`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        side: 'R',
+        line: 2,
+        column: line.indexOf('helper();'),
+        symbol: 'helper'
+      })
+    });
+    const peek = await responseJson(peekResponse, isSourcePeekResponse, 'source peek response');
+
+    expect(peekResponse.status).toBe(200);
+    expect(peek).toMatchObject({
+      symbol: 'helper',
+      targetSymbol: 'helper',
+      filePath: 'lib/helper.ts',
+      line: 1,
+      matchReason: 'import'
+    });
+    expect(peek.content).toContain('export const helper');
+  });
+
+  it('caps source peek content for huge single-line files', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const hugeLine = `export const huge = '${'x'.repeat(SOURCE_PEEK_MAX_BYTES + 1000)}';`;
+    await writeFile(path.join(repoRoot, 'api.ts'), `${hugeLine}\n`);
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff({ code: hugeLine }))
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const peekResponse = await app.request(`/api/reviews/${created.meta.id}/source-peek`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        side: 'R',
+        line: 1,
+        column: 'export const '.length,
+        symbol: 'huge'
+      })
+    });
+    const peek = await responseJson(peekResponse, isSourcePeekResponse, 'source peek response');
+
+    expect(peekResponse.status).toBe(200);
+    expect(peek.truncated).toBe(true);
+    expect(peek.content).toContain('export const huge');
+    expect(Buffer.byteLength(peek.content, 'utf8')).toBeLessThanOrEqual(SOURCE_PEEK_MAX_BYTES);
+  });
+
   it('opens files that are present only in per-commit diffs', async () => {
-    const openLocalPath = vi.fn(async (_filePath: string) => undefined);
-    vi.doMock('./local-open', () => ({ openLocalPath }));
+    const { openLocalPath } = mockLocalOpen();
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
@@ -813,8 +1040,7 @@ describe('Gloss review API global persistence', () => {
   });
 
   it('rejects invalid local file open requests', async () => {
-    const openLocalPath = vi.fn(async (_filePath: string) => undefined);
-    vi.doMock('./local-open', () => ({ openLocalPath }));
+    const { openLocalPath } = mockLocalOpen();
     const { createApp } = await import('./index');
     const app = createApp('http://localhost:4321');
     const createdResponse = await app.request('/api/reviews', {

@@ -27,16 +27,26 @@ import type {
   CommitRangeDiffResponse,
   DiffContextSource,
   DiffPayload,
+  OpenFileTarget,
+  OpenFileTargetInfo,
   ReviewRecord,
   ReviewScope,
   ReviewTurn
 } from '../../shared/types';
 import { isReviewEvent, parseJson } from '../../shared/validation';
-import { fetchCommitRangeDiff, fetchReview, openReviewFile } from '../api';
-import { DiffView } from '../components/DiffView';
+import {
+  fetchCommitRangeDiff,
+  fetchOpenFileTargets,
+  fetchReview,
+  fetchReviewFileContent,
+  fetchSourcePeek,
+  openReviewFile
+} from '../api';
+import { DiffView, type SourcePeekTrigger } from '../components/DiffView';
 import { fileCardElementId } from '../components/diff-view-helpers';
 import { FileTree } from '../components/FileTree';
 import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-helpers';
+import { SourcePeekPanel, type SourcePeekPanelState } from '../components/SourcePeekPanel';
 import { SubmitBar } from '../components/SubmitBar';
 import { useReviewStore } from '../store';
 import { type ThemePreference, useTheme } from '../theme';
@@ -63,6 +73,10 @@ const EMPTY_DIFF: Pick<DiffPayload, 'files' | 'stats'> = {
 };
 const EMPTY_DIFF_FILES: DiffPayload['files'] = [];
 const EMPTY_COMMIT_DIFFS: CommitDiff[] = [];
+const FALLBACK_OPEN_TARGETS: OpenFileTargetInfo[] = [
+  { label: 'Default app', target: 'default' },
+  { label: 'Open in folder', target: 'folder' }
+];
 
 interface RangeDiffState {
   diff: CommitRangeDiffResponse | null;
@@ -100,6 +114,15 @@ const RELATIVE_TIME_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ['minute', 60],
   ['second', 1]
 ];
+const THEME_PREFERENCE_OPTIONS: Array<{
+  icon: typeof Monitor;
+  label: string;
+  value: ThemePreference;
+}> = [
+  { icon: Monitor, label: 'Match system theme', value: 'system' },
+  { icon: Sun, label: 'Use light theme', value: 'light' },
+  { icon: Moon, label: 'Use dark theme', value: 'dark' }
+];
 
 export function Review({ reviewId }: { reviewId: string }) {
   return <ReviewContent key={reviewId} reviewId={reviewId} />;
@@ -107,20 +130,11 @@ export function Review({ reviewId }: { reviewId: string }) {
 
 function ThemePreferenceControl() {
   const { preference, setPreference } = useTheme();
-  const options: Array<{
-    icon: typeof Monitor;
-    label: string;
-    value: ThemePreference;
-  }> = [
-    { icon: Monitor, label: 'Match system theme', value: 'system' },
-    { icon: Sun, label: 'Use light theme', value: 'light' },
-    { icon: Moon, label: 'Use dark theme', value: 'dark' }
-  ];
 
   return (
     <fieldset className="theme-toggle">
       <legend className="sr-only">Theme</legend>
-      {options.map((option) => {
+      {THEME_PREFERENCE_OPTIONS.map((option) => {
         const Icon = option.icon;
         return (
           <button
@@ -169,11 +183,15 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [commitView, setCommitView] = useState<CommitView>({ mode: 'all' });
   const [rangeDiffState, dispatchRangeDiff] = useReducer(rangeDiffReducer, IDLE_RANGE_DIFF_STATE);
+  const [sourcePeekState, setSourcePeekState] = useState<SourcePeekPanelState | null>(null);
+  const [selectedSourcePeek, setSelectedSourcePeek] = useState<SourcePeekTrigger | null>(null);
+  const [openTargets, setOpenTargets] = useState<OpenFileTargetInfo[]>(FALLBACK_OPEN_TARGETS);
   const [viewedFilesState, setViewedFilesState] = useState<ViewedFilesState>(() => ({
     storageKey: reviewId,
     files: loadViewedFiles(reviewId)
   }));
   const [openFileError, setOpenFileError] = useState<string | null>(null);
+  const sourcePeekRequestId = useRef(0);
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
   const setDraft = useReviewStore((state) => state.setDraft);
@@ -241,6 +259,8 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   const resetTurnView = useCallback(() => {
     setCommitView({ mode: 'all' });
     dispatchRangeDiff({ type: 'idle' });
+    setSelectedSourcePeek(null);
+    setSourcePeekState(null);
     setDraft(null);
   }, [setDraft]);
 
@@ -272,6 +292,24 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
       cancelled = true;
     };
   }, [reviewId, reset, applyRecord]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchOpenFileTargets()
+      .then(({ targets }) => {
+        if (!cancelled) {
+          setOpenTargets(targets.length > 0 ? targets : FALLBACK_OPEN_TARGETS);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOpenTargets(FALLBACK_OPEN_TARGETS);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedTurn) {
@@ -436,12 +474,73 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
       return { storageKey: viewedStorageKey, files: next };
     });
   };
-  const handleOpenFile = async (filePath: string) => {
+  const handleOpenFile = async (filePath: string, target: OpenFileTarget) => {
     setOpenFileError(null);
     try {
-      await openReviewFile(reviewId, filePath, selectedTurn.id);
+      await openReviewFile(reviewId, filePath, selectedTurn.id, { target });
     } catch (reason) {
-      setOpenFileError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setOpenFileError(message);
+      throw new Error(message);
+    }
+  };
+  const handleOpenSourceFile = async (filePath: string, target: OpenFileTarget) => {
+    setOpenFileError(null);
+    try {
+      await openReviewFile(reviewId, filePath, selectedTurn.id, { scope: 'repo', target });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setOpenFileError(message);
+      throw new Error(message);
+    }
+  };
+  const handleCopyFileContents = async (filePath: string) => {
+    setOpenFileError(null);
+    try {
+      const response = await fetchReviewFileContent(reviewId, filePath, selectedTurn.id);
+      return response.content;
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setOpenFileError(message);
+      throw new Error(message);
+    }
+  };
+  const handleCopySourceFileContents = async (filePath: string) => {
+    setOpenFileError(null);
+    try {
+      const response = await fetchReviewFileContent(reviewId, filePath, selectedTurn.id, {
+        scope: 'repo'
+      });
+      return response.content;
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setOpenFileError(message);
+      throw new Error(message);
+    }
+  };
+  const handleSourcePeek = async (trigger: SourcePeekTrigger) => {
+    const requestId = sourcePeekRequestId.current + 1;
+    sourcePeekRequestId.current = requestId;
+    setSelectedSourcePeek(trigger);
+    setSourcePeekState({ status: 'loading', symbol: trigger.symbol });
+    try {
+      const response = await fetchSourcePeek({
+        reviewId,
+        turnId: selectedTurn.id,
+        source: contextSource,
+        ...trigger
+      });
+      if (sourcePeekRequestId.current === requestId) {
+        setSourcePeekState({ status: 'ready', response });
+      }
+    } catch (reason) {
+      if (sourcePeekRequestId.current === requestId) {
+        setSourcePeekState({
+          message: reason instanceof Error ? reason.message : String(reason),
+          status: 'error',
+          symbol: trigger.symbol
+        });
+      }
     }
   };
   const fileTreeProps = {
@@ -471,156 +570,184 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
 
   return (
     <main className="review-shell">
-      <header className="topbar">
-        <div className="topbar-header">
-          <div className="topbar-title">
-            <img className="brand-mark" src="/logo.svg" alt="" />
-            <div className="review-heading">
-              <p className="product-name">Gloss</p>
-              <h1>
-                {titlePresentation.icon === 'branch' ? (
-                  <GitBranch className="review-title-icon" size={18} />
+      <div className="review-split">
+        <div className="review-main-pane">
+          <header className="topbar">
+            <div className="topbar-header">
+              <div className="topbar-title">
+                <img className="brand-mark" src="/logo.svg" alt="" />
+                <div className="review-heading">
+                  <p className="product-name">Gloss</p>
+                  <h1>
+                    {titlePresentation.icon === 'branch' ? (
+                      <GitBranch className="review-title-icon" size={18} />
+                    ) : null}
+                    <span className="review-title-text">{displayTitle}</span>
+                  </h1>
+                </div>
+              </div>
+              <div className="topbar-actions">
+                <CommitSelector
+                  commitDiffs={commitDiffs}
+                  value={effectiveCommitView}
+                  onChange={(nextCommitView) => {
+                    setCommitView(nextCommitView);
+                    if (nextCommitView.mode !== 'range') {
+                      dispatchRangeDiff({ type: 'idle' });
+                    }
+                    setDraft(null);
+                  }}
+                />
+                <div className="viewed-progress" title="Viewed files">
+                  <span
+                    aria-hidden="true"
+                    className="viewed-progress-ring"
+                    style={{ '--viewed-progress': `${viewedProgress}%` } as CSSProperties}
+                  />
+                  {viewedCount} / {activeDiff.files.length} viewed
+                </div>
+                <button
+                  aria-label="Open file tree"
+                  className="icon-button file-tree-mobile-toggle"
+                  title="Open file tree"
+                  type="button"
+                  onClick={() => setFileTreeDrawerOpen(true)}
+                >
+                  <FileCode2 size={16} />
+                </button>
+                <button
+                  aria-label={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
+                  aria-pressed={wrapLines}
+                  className="icon-button wrap-toggle"
+                  title={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
+                  type="button"
+                  onClick={() => setWrapLines((current) => !current)}
+                >
+                  {wrapLines ? <MoveHorizontal size={16} /> : <WrapText size={16} />}
+                </button>
+                <ThemePreferenceControl />
+                {branchPill ? (
+                  <div className="branch-pill" title={branchPill.title}>
+                    <GitBranch size={16} />
+                    <span>{branchPill.label}</span>
+                  </div>
                 ) : null}
-                <span className="review-title-text">{displayTitle}</span>
-              </h1>
+              </div>
             </div>
-          </div>
-          <div className="topbar-actions">
-            <CommitSelector
-              commitDiffs={commitDiffs}
-              value={effectiveCommitView}
-              onChange={(nextCommitView) => {
-                setCommitView(nextCommitView);
-                if (nextCommitView.mode !== 'range') {
-                  dispatchRangeDiff({ type: 'idle' });
+            <ReviewContextBar
+              scope={scope}
+              selectedTurn={selectedTurn}
+              stats={stats}
+              turns={record.turns}
+              onSelectTurn={(turnId) => {
+                if (turnId !== selectedTurn.id) {
+                  resetTurnView();
                 }
-                setDraft(null);
+                setSelectedTurnId(turnId === latestTurnId ? null : turnId);
               }}
             />
-            <div className="viewed-progress" title="Viewed files">
-              <span
-                aria-hidden="true"
-                className="viewed-progress-ring"
-                style={{ '--viewed-progress': `${viewedProgress}%` } as CSSProperties}
+          </header>
+          {openFileError ? <div className="open-file-message error">{openFileError}</div> : null}
+          {visibleRangeDiffError ? (
+            <div className="open-file-message error">{visibleRangeDiffError}</div>
+          ) : null}
+          {visibleRangeDiffLoading ? <div className="range-loading">Loading range diff</div> : null}
+          <div
+            className={`review-body ${fileTreeCollapsed ? 'file-tree-collapsed' : ''}`}
+            style={{ '--file-tree-width': `${fileTreeWidth}px` } as CSSProperties}
+          >
+            <aside className={`review-sidebar ${fileTreeCollapsed ? 'collapsed' : ''}`}>
+              {fileTreeCollapsed ? (
+                <button
+                  aria-label="Expand file tree"
+                  className="file-tree-rail"
+                  title="Expand file tree"
+                  type="button"
+                  onClick={() => setFileTreeCollapsed(false)}
+                >
+                  <PanelLeftOpen size={17} />
+                  <span>Files</span>
+                  <span>{filteredFiles.length}</span>
+                </button>
+              ) : (
+                <>
+                  {sidebarFileTree}
+                  <button
+                    aria-label="Resize file tree"
+                    className="file-tree-resize-handle"
+                    title="Resize file tree"
+                    type="button"
+                    onPointerDown={startFileTreeResize}
+                  />
+                </>
+              )}
+            </aside>
+            <section className="review-diff-column">
+              {readOnly && !showTurnHistory ? <ReviewStateBanner record={displayRecord} /> : null}
+              <DiffView
+                activeFilePath={visibleActiveFilePath}
+                contextSource={contextSource}
+                diff={activeDiff}
+                emptyState={filteredEmptyState}
+                files={filteredFiles}
+                record={displayRecord}
+                readOnly={readOnly}
+                reviewId={reviewId}
+                selectedSourcePeek={selectedSourcePeek}
+                turnId={selectedTurn.id}
+                viewedFiles={viewedFiles}
+                wrapLines={wrapLines}
+                openTargets={openTargets}
+                onCopyFileContents={handleCopyFileContents}
+                onOpenFile={handleOpenFile}
+                onSourcePeek={handleSourcePeek}
+                onViewedChange={handleViewedChange}
               />
-              {viewedCount} / {activeDiff.files.length} viewed
-            </div>
-            <button
-              aria-label="Open file tree"
-              className="icon-button file-tree-mobile-toggle"
-              title="Open file tree"
-              type="button"
-              onClick={() => setFileTreeDrawerOpen(true)}
-            >
-              <FileCode2 size={16} />
-            </button>
-            <button
-              aria-label={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
-              aria-pressed={wrapLines}
-              className="icon-button wrap-toggle"
-              title={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
-              type="button"
-              onClick={() => setWrapLines((current) => !current)}
-            >
-              {wrapLines ? <MoveHorizontal size={16} /> : <WrapText size={16} />}
-            </button>
-            <ThemePreferenceControl />
-            {branchPill ? (
-              <div className="branch-pill" title={branchPill.title}>
-                <GitBranch size={16} />
-                <span>{branchPill.label}</span>
-              </div>
-            ) : null}
+            </section>
           </div>
-        </div>
-        <ReviewContextBar
-          scope={scope}
-          selectedTurn={selectedTurn}
-          stats={stats}
-          turns={record.turns}
-          onSelectTurn={(turnId) => {
-            if (turnId !== selectedTurn.id) {
-              resetTurnView();
-            }
-            setSelectedTurnId(turnId === latestTurnId ? null : turnId);
-          }}
-        />
-      </header>
-      {openFileError ? <div className="open-file-message error">{openFileError}</div> : null}
-      {visibleRangeDiffError ? (
-        <div className="open-file-message error">{visibleRangeDiffError}</div>
-      ) : null}
-      {visibleRangeDiffLoading ? <div className="range-loading">Loading range diff</div> : null}
-      <div
-        className={`review-body ${fileTreeCollapsed ? 'file-tree-collapsed' : ''}`}
-        style={{ '--file-tree-width': `${fileTreeWidth}px` } as CSSProperties}
-      >
-        <aside className={`review-sidebar ${fileTreeCollapsed ? 'collapsed' : ''}`}>
-          {fileTreeCollapsed ? (
-            <button
-              aria-label="Expand file tree"
-              className="file-tree-rail"
-              title="Expand file tree"
-              type="button"
-              onClick={() => setFileTreeCollapsed(false)}
-            >
-              <PanelLeftOpen size={17} />
-              <span>Files</span>
-              <span>{filteredFiles.length}</span>
-            </button>
-          ) : (
-            <>
-              {sidebarFileTree}
-              <button
-                aria-label="Resize file tree"
-                className="file-tree-resize-handle"
-                title="Resize file tree"
-                type="button"
-                onPointerDown={startFileTreeResize}
-              />
-            </>
+          {fileTreeDrawerOpen ? (
+            <dialog className="file-tree-drawer-backdrop" aria-label="Files" open>
+              <aside className="file-tree-drawer">
+                <div className="file-tree-drawer-header">
+                  <span>Changed files</span>
+                  <button
+                    aria-label="Close file tree"
+                    className="icon-button"
+                    type="button"
+                    onClick={() => setFileTreeDrawerOpen(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                {drawerFileTree}
+              </aside>
+            </dialog>
+          ) : null}
+          {readOnly ? null : (
+            <SubmitBar
+              reviewId={reviewId}
+              reviewScope={submitReviewScope}
+              onSubmitted={reloadReview}
+            />
           )}
-        </aside>
-        <section className="review-diff-column">
-          {readOnly && !showTurnHistory ? <ReviewStateBanner record={displayRecord} /> : null}
-          <DiffView
-            activeFilePath={visibleActiveFilePath}
-            contextSource={contextSource}
-            diff={activeDiff}
-            emptyState={filteredEmptyState}
-            files={filteredFiles}
-            record={displayRecord}
-            readOnly={readOnly}
-            reviewId={reviewId}
-            turnId={selectedTurn.id}
-            viewedFiles={viewedFiles}
-            wrapLines={wrapLines}
-            onOpenFile={handleOpenFile}
-            onViewedChange={handleViewedChange}
-          />
-        </section>
+        </div>
+        {sourcePeekState
+          ? createPortal(
+              <SourcePeekPanel
+                openTargets={openTargets}
+                state={sourcePeekState}
+                onCopyFileContents={handleCopySourceFileContents}
+                onOpenFile={handleOpenSourceFile}
+                onClose={() => {
+                  sourcePeekRequestId.current += 1;
+                  setSelectedSourcePeek(null);
+                  setSourcePeekState(null);
+                }}
+              />,
+              document.body
+            )
+          : null}
       </div>
-      {fileTreeDrawerOpen ? (
-        <dialog className="file-tree-drawer-backdrop" aria-label="Files" open>
-          <aside className="file-tree-drawer">
-            <div className="file-tree-drawer-header">
-              <span>Changed files</span>
-              <button
-                aria-label="Close file tree"
-                className="icon-button"
-                type="button"
-                onClick={() => setFileTreeDrawerOpen(false)}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            {drawerFileTree}
-          </aside>
-        </dialog>
-      ) : null}
-      {readOnly ? null : (
-        <SubmitBar reviewId={reviewId} reviewScope={submitReviewScope} onSubmitted={reloadReview} />
-      )}
     </main>
   );
 }

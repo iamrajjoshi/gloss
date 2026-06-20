@@ -15,6 +15,8 @@ import type {
   DiffFile,
   DiffLine,
   DiffPayload,
+  OpenFileTarget,
+  OpenFileTargetInfo,
   ReviewRecord,
   Side
 } from '../../shared/types';
@@ -51,6 +53,17 @@ interface SelectionRef {
   end: RowRef;
 }
 
+export interface SourcePeekTrigger {
+  column: number;
+  filePath: string;
+  line: number;
+  oldPath: string | null;
+  side: Side;
+  symbol: string;
+}
+
+const EMPTY_OPEN_TARGETS: OpenFileTargetInfo[] = [];
+
 export function DiffView({
   activeFilePath = null,
   contextSource,
@@ -64,7 +77,11 @@ export function DiffView({
   wrapLines = false,
   viewedFiles = new Set<string>(),
   onViewedChange = () => undefined,
-  onOpenFile = () => undefined
+  openTargets = EMPTY_OPEN_TARGETS,
+  selectedSourcePeek = null,
+  onCopyFileContents,
+  onOpenFile = () => undefined,
+  onSourcePeek = () => undefined
 }: {
   activeFilePath?: string | null;
   contextSource?: DiffContextSource;
@@ -74,11 +91,15 @@ export function DiffView({
   diff?: Pick<DiffPayload, 'files'>;
   readOnly?: boolean;
   reviewId?: string;
+  selectedSourcePeek?: SourcePeekTrigger | null;
   turnId?: string;
   wrapLines?: boolean;
   viewedFiles?: Set<string>;
   onViewedChange?: (filePath: string, viewed: boolean) => void;
-  onOpenFile?: (filePath: string) => void;
+  openTargets?: OpenFileTargetInfo[];
+  onCopyFileContents?: (filePath: string) => Promise<string>;
+  onOpenFile?: (filePath: string, target: OpenFileTarget) => void | Promise<void>;
+  onSourcePeek?: (trigger: SourcePeekTrigger) => void;
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const expandedActiveFilePath = useRef(activeFilePath);
@@ -123,6 +144,7 @@ export function DiffView({
               >
                 <FileHeader
                   file={file}
+                  openTargets={openTargets}
                   collapsed={collapsed}
                   viewed={viewedFiles.has(file.path)}
                   onToggle={() => {
@@ -135,8 +157,11 @@ export function DiffView({
                       return next;
                     });
                   }}
+                  onCopyFileContents={
+                    onCopyFileContents ? () => onCopyFileContents(file.path) : undefined
+                  }
                   onViewedChange={(viewed) => handleViewedChange(file.path, viewed)}
-                  onOpenFile={() => onOpenFile(file.path)}
+                  onOpenFile={(target) => onOpenFile(file.path, target)}
                 />
                 {collapsed ? null : (
                   <DiffFileTable
@@ -149,8 +174,10 @@ export function DiffView({
                     )}`}
                     readOnly={readOnly}
                     reviewId={reviewId}
+                    selectedSourcePeek={selectedSourcePeek}
                     turnId={turnId}
                     wrapLines={wrapLines}
+                    onSourcePeek={onSourcePeek}
                   />
                 )}
               </article>
@@ -204,15 +231,19 @@ function DiffFileTable({
   file,
   readOnly,
   reviewId,
+  selectedSourcePeek,
   turnId,
-  wrapLines
+  wrapLines,
+  onSourcePeek
 }: {
   contextSource?: DiffContextSource;
   file: DiffFile;
   readOnly: boolean;
   reviewId?: string;
+  selectedSourcePeek: SourcePeekTrigger | null;
   turnId?: string;
   wrapLines: boolean;
+  onSourcePeek: (trigger: SourcePeekTrigger) => void;
 }) {
   const comments = useReviewStore((state) => state.comments);
   const resolution = useReviewStore((state) => state.resolution);
@@ -490,7 +521,26 @@ function DiffFileTable({
           </div>
           <CodeLine
             content={line.content}
+            selectedSourcePeek={
+              selectedSourcePeek &&
+              selectedSourcePeek.filePath === file.path &&
+              selectedSourcePeek.oldPath === file.oldPath &&
+              selectedSourcePeek.side === side &&
+              selectedSourcePeek.line === lineNumber
+                ? selectedSourcePeek
+                : null
+            }
             tokens={highlightedLines?.get(diffLineKey(side, lineNumber)) ?? null}
+            onSourcePeek={(symbol, column) =>
+              onSourcePeek({
+                column,
+                filePath: file.path,
+                line: lineNumber,
+                oldPath: file.oldPath,
+                side,
+                symbol
+              })
+            }
           />
         </div>
         {rowComments.map((comment) => {
@@ -634,20 +684,183 @@ function HiddenContextIcon({ direction }: { direction: ContextExpansionDirection
   return <ChevronsUpDown size={15} />;
 }
 
-function CodeLine({ content, tokens }: { content: string; tokens: SyntaxToken[] | null }) {
+function CodeLine({
+  content,
+  selectedSourcePeek,
+  tokens,
+  onSourcePeek
+}: {
+  content: string;
+  selectedSourcePeek: SourcePeekTrigger | null;
+  tokens: SyntaxToken[] | null;
+  onSourcePeek: (symbol: string, column: number) => void;
+}) {
   if (!tokens || tokens.length === 0) {
-    return <code>{content || ' '}</code>;
+    return (
+      <code>
+        <SourcePeekText
+          offsetBase={0}
+          selectedSourcePeek={selectedSourcePeek}
+          text={content || ' '}
+          onSourcePeek={onSourcePeek}
+        />
+      </code>
+    );
   }
 
   return (
     <code>
-      {tokens.map((token) => (
-        <span key={`${token.offset}:${token.content}`} style={styleForToken(token)}>
-          {token.content}
-        </span>
-      ))}
+      {tokens.map((token) => {
+        const style = styleForToken(token);
+        return (
+          <span key={`${token.offset}:${token.content}`} style={style}>
+            <SourcePeekText
+              offsetBase={token.offset}
+              selectedSourcePeek={selectedSourcePeek}
+              style={style}
+              text={token.content}
+              onSourcePeek={onSourcePeek}
+            />
+          </span>
+        );
+      })}
     </code>
   );
+}
+
+const identifierRegex = /[A-Za-z_$][\w$]*/g;
+const syntaxKeywords = new Set([
+  'as',
+  'async',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'from',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'instanceof',
+  'interface',
+  'let',
+  'new',
+  'null',
+  'of',
+  'return',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'type',
+  'typeof',
+  'undefined',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield'
+]);
+
+function SourcePeekText({
+  offsetBase,
+  selectedSourcePeek,
+  style,
+  text,
+  onSourcePeek
+}: {
+  offsetBase: number;
+  selectedSourcePeek: SourcePeekTrigger | null;
+  style?: CSSProperties;
+  text: string;
+  onSourcePeek: (symbol: string, column: number) => void;
+}) {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  identifierRegex.lastIndex = 0;
+  let match = identifierRegex.exec(text);
+  while (match !== null) {
+    const identifier = match[0];
+    const matchIndex = match.index;
+    if (matchIndex > cursor) {
+      nodes.push(text.slice(cursor, matchIndex));
+    }
+    if (syntaxKeywords.has(identifier)) {
+      nodes.push(identifier);
+    } else {
+      const column = offsetBase + matchIndex;
+      const selected =
+        selectedSourcePeek?.column === column && selectedSourcePeek.symbol === identifier;
+      nodes.push(
+        <button
+          aria-current={selected ? 'location' : undefined}
+          className={`source-symbol ${selected ? 'selected' : ''}`}
+          data-source-symbol={identifier}
+          key={`${offsetBase}:${matchIndex}:${identifier}`}
+          style={style}
+          tabIndex={-1}
+          type="button"
+          onClick={(event) => {
+            if (!event.metaKey && !event.ctrlKey) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            onSourcePeek(identifier, column);
+          }}
+          onContextMenu={(event) => {
+            if (!event.ctrlKey) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            onSourcePeek(identifier, column);
+          }}
+          onMouseDown={(event) => {
+            if (event.metaKey || event.ctrlKey) {
+              event.preventDefault();
+            }
+          }}
+          onKeyDown={(event) => {
+            if (
+              (event.key !== 'Enter' && event.key !== ' ') ||
+              (!event.metaKey && !event.ctrlKey)
+            ) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            onSourcePeek(identifier, column);
+          }}
+        >
+          {identifier}
+        </button>
+      );
+    }
+    cursor = matchIndex + identifier.length;
+    match = identifierRegex.exec(text);
+  }
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+  return <>{nodes.length > 0 ? nodes : text}</>;
 }
 
 function styleForToken(token: SyntaxToken): CSSProperties {

@@ -31,6 +31,8 @@ export interface SyntaxToken {
 
 export type HighlightedDiffLines = Map<string, SyntaxToken[]>;
 
+export type HighlightedSourceLines = SyntaxToken[][];
+
 const diffThemeByResolvedTheme: Record<ResolvedTheme, string> = {
   dark: 'github-dark-default',
   light: 'github-light-default'
@@ -112,6 +114,25 @@ export async function highlightDiffFile(
   }
 
   return highlightedLines;
+}
+
+export async function highlightSourceContent(
+  content: string,
+  language: string | null,
+  theme: ResolvedTheme = 'dark'
+): Promise<HighlightedSourceLines | null> {
+  const shikiLanguage = shikiLanguageForGlossLanguage(language);
+  if (!shikiLanguage) {
+    return null;
+  }
+
+  const highlighter = await getDiffHighlighter();
+  return highlighter
+    .codeToTokens(content, {
+      lang: shikiLanguage,
+      theme: diffThemeByResolvedTheme[theme]
+    })
+    .tokens.map((tokens) => toSyntaxTokens(tokens));
 }
 
 function getDiffHighlighter(): Promise<HighlighterCore> {

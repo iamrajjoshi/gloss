@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronRight, ExternalLink, MoreHorizontal } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import type { DiffFile } from '../../shared/types';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import type { DiffFile, OpenFileTarget, OpenFileTargetInfo } from '../../shared/types';
+import { FileActionsMenu } from './FileActionsMenu';
 import { LanguageIcon } from './LanguageIcon';
 
 export function FileHeader({
@@ -8,43 +8,20 @@ export function FileHeader({
   collapsed,
   viewed,
   onToggle,
+  onCopyFileContents,
   onViewedChange,
-  onOpenFile
+  onOpenFile,
+  openTargets
 }: {
   file: DiffFile;
   collapsed: boolean;
   viewed: boolean;
   onToggle: () => void;
+  onCopyFileContents?: () => Promise<string>;
   onViewedChange: (viewed: boolean) => void;
-  onOpenFile: () => void;
+  onOpenFile: (target: OpenFileTarget) => void | Promise<void>;
+  openTargets: OpenFileTargetInfo[];
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMenuOpen(false);
-      }
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [menuOpen]);
-
   return (
     <div className="file-header">
       <button className="file-header-toggle" type="button" onClick={onToggle}>
@@ -65,34 +42,12 @@ export function FileHeader({
         />
         <span>Viewed</span>
       </label>
-      <div className="file-menu" ref={menuRef}>
-        <button
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-          aria-label={`Open actions for ${file.path}`}
-          className="icon-button file-menu-button"
-          title="File actions"
-          type="button"
-          onClick={() => setMenuOpen((current) => !current)}
-        >
-          <MoreHorizontal size={17} />
-        </button>
-        {menuOpen ? (
-          <div className="file-menu-popover" role="menu">
-            <button
-              role="menuitem"
-              type="button"
-              onClick={() => {
-                setMenuOpen(false);
-                onOpenFile();
-              }}
-            >
-              <ExternalLink size={16} />
-              <span>Open locally</span>
-            </button>
-          </div>
-        ) : null}
-      </div>
+      <FileActionsMenu
+        filePath={file.path}
+        openTargets={openTargets}
+        onCopyFileContents={onCopyFileContents}
+        onOpenFile={async (target) => onOpenFile(target)}
+      />
     </div>
   );
 }
