@@ -17,6 +17,8 @@ import type {
   ReviewRecord,
   ReviewScope,
   Side,
+  SourcePeekRangeRequest,
+  SourcePeekRangeResponse,
   SourcePeekRequest,
   SourcePeekResponse,
   SubmitReviewRequest
@@ -29,6 +31,7 @@ import {
   isOpenFileTargetsResponse,
   isOpenResult,
   isReviewRecord,
+  isSourcePeekRangeResponse,
   isSourcePeekResponse,
   type JsonGuard,
   parseJsonValue
@@ -222,5 +225,41 @@ export async function fetchSourcePeek({
     }),
     isSourcePeekResponse,
     'source peek response'
+  );
+}
+
+export async function fetchSourcePeekRange({
+  filePath,
+  lineCount,
+  reviewId,
+  side,
+  source,
+  startLine,
+  turnId
+}: {
+  reviewId: string;
+  filePath: string;
+  turnId?: string;
+  source: DiffContextSource;
+  side: Side;
+  startLine: number;
+  lineCount: number;
+}): Promise<SourcePeekRangeResponse> {
+  const request: SourcePeekRangeRequest = {
+    filePath,
+    turnId,
+    source,
+    side,
+    startLine,
+    lineCount
+  };
+  return json(
+    await fetch(`/api/reviews/${reviewId}/source-peek/range`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request)
+    }),
+    isSourcePeekRangeResponse,
+    'source peek range response'
   );
 }

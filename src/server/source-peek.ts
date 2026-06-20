@@ -2,8 +2,12 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
 import { languageForPath } from '../shared/language';
-import type { SourcePeekResponse } from '../shared/types';
-import { SOURCE_PEEK_MAX_BYTES, type SourcePeekMatchReason } from '../shared/types';
+import type { SourcePeekRangeResponse, SourcePeekResponse } from '../shared/types';
+import {
+  SOURCE_PEEK_MAX_BYTES,
+  SOURCE_PEEK_RANGE_MAX_LINES,
+  type SourcePeekMatchReason
+} from '../shared/types';
 
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json'];
 const PATH_CONFIG_FILES = ['tsconfig.json', 'jsconfig.json'];
@@ -19,6 +23,14 @@ interface SourcePeekOptions {
   symbol: string;
   line: number;
   column: number;
+}
+
+interface SourcePeekRangeOptions {
+  repoRoot: string;
+  sourceFilePath: string;
+  sourceRef: string | null;
+  startLine: number;
+  lineCount: number;
 }
 
 interface ImportBinding {
@@ -114,6 +126,26 @@ export async function resolveSourcePeek({
   }
 
   throw new Error(`No definition found for ${symbol}`);
+}
+
+export async function readSourcePeekRange({
+  lineCount,
+  repoRoot,
+  sourceFilePath,
+  sourceRef,
+  startLine
+}: SourcePeekRangeOptions): Promise<SourcePeekRangeResponse> {
+  const content = await readRepoText(repoRoot, sourceRef, sourceFilePath);
+  const limited = limitContentRange(content, startLine, lineCount);
+  return {
+    filePath: sourceFilePath,
+    startLine: limited.startLine,
+    totalLines: limited.totalLines,
+    content: limited.content,
+    truncated: limited.truncated,
+    hasMoreAbove: limited.hasMoreAbove,
+    hasMoreBelow: limited.hasMoreBelow
+  };
 }
 
 async function resolveImportedTarget({
@@ -341,51 +373,121 @@ function responseForMatch({
     language: languageForPath(filePath),
     content: limited.content,
     truncated: limited.truncated,
+    totalLines: limited.totalLines,
+    hasMoreAbove: limited.hasMoreAbove,
+    hasMoreBelow: limited.hasMoreBelow,
     matchReason
   };
 }
 
-function limitContentAroundLine(
-  content: string,
-  line: number
-): {
+interface SourcePeekWindow {
   content: string;
   startLine: number;
+  totalLines: number;
   truncated: boolean;
-} {
+  hasMoreAbove: boolean;
+  hasMoreBelow: boolean;
+}
+
+function limitContentAroundLine(content: string, line: number): SourcePeekWindow {
+  const lines = splitFileLines(content);
+  const totalLines = sourceTotalLines(lines);
   if (Buffer.byteLength(content, 'utf8') <= SOURCE_PEEK_MAX_BYTES) {
-    return { content, startLine: 1, truncated: false };
+    return {
+      content,
+      startLine: 1,
+      totalLines,
+      truncated: false,
+      hasMoreAbove: false,
+      hasMoreBelow: false
+    };
   }
 
-  const lines = splitFileLines(content);
+  if (lines.length === 0) {
+    return emptySourceWindow();
+  }
+
   const targetIndex = Math.max(0, line - 1);
   const preferredStartIndex = Math.max(0, targetIndex - SOURCE_PEEK_TARGET_CONTEXT_LINES);
   const preferredEndIndex = Math.min(lines.length, preferredStartIndex + SOURCE_PEEK_CONTEXT_LINES);
-  let startIndex = preferredStartIndex;
-  let endIndex = preferredEndIndex;
-  let limitedContent = lines.slice(startIndex, endIndex).join('\n');
+  return limitLinesByIndexes(lines, preferredStartIndex, preferredEndIndex, targetIndex);
+}
+
+function limitContentRange(
+  content: string,
+  startLine: number,
+  lineCount: number
+): SourcePeekWindow {
+  const lines = splitFileLines(content);
+  if (lines.length === 0) {
+    return emptySourceWindow();
+  }
+
+  const cappedLineCount = Math.min(lineCount, SOURCE_PEEK_RANGE_MAX_LINES);
+  const startIndex = clampNumber(startLine - 1, 0, lines.length - 1);
+  const endIndex = Math.min(lines.length, startIndex + cappedLineCount);
+  return limitLinesByIndexes(lines, startIndex, endIndex, null);
+}
+
+function limitLinesByIndexes(
+  lines: string[],
+  startIndex: number,
+  endIndex: number,
+  targetIndex: number | null
+): SourcePeekWindow {
+  let limitedStartIndex = startIndex;
+  let limitedEndIndex = endIndex;
+  let limitedContent = lines.slice(limitedStartIndex, limitedEndIndex).join('\n');
+  let truncatedByBytes = false;
 
   while (
     Buffer.byteLength(limitedContent, 'utf8') > SOURCE_PEEK_MAX_BYTES &&
-    endIndex - startIndex > 1
+    limitedEndIndex - limitedStartIndex > 1
   ) {
-    if (targetIndex - startIndex > endIndex - targetIndex - 1) {
-      startIndex += 1;
+    if (
+      targetIndex !== null &&
+      targetIndex - limitedStartIndex > limitedEndIndex - targetIndex - 1
+    ) {
+      limitedStartIndex += 1;
     } else {
-      endIndex -= 1;
+      limitedEndIndex -= 1;
     }
-    limitedContent = lines.slice(startIndex, endIndex).join('\n');
+    limitedContent = lines.slice(limitedStartIndex, limitedEndIndex).join('\n');
+    truncatedByBytes = true;
   }
 
   if (Buffer.byteLength(limitedContent, 'utf8') > SOURCE_PEEK_MAX_BYTES) {
     limitedContent = truncateUtf8(limitedContent, SOURCE_PEEK_MAX_BYTES);
+    truncatedByBytes = true;
   }
 
   return {
     content: limitedContent,
-    startLine: startIndex + 1,
-    truncated: true
+    startLine: limitedStartIndex + 1,
+    totalLines: sourceTotalLines(lines),
+    truncated: truncatedByBytes || limitedStartIndex > 0 || limitedEndIndex < lines.length,
+    hasMoreAbove: limitedStartIndex > 0,
+    hasMoreBelow: limitedEndIndex < lines.length
   };
+}
+
+function emptySourceWindow(): SourcePeekWindow {
+  return {
+    content: '',
+    startLine: 1,
+    totalLines: 1,
+    truncated: false,
+    hasMoreAbove: false,
+    hasMoreBelow: false
+  };
+}
+
+function sourceTotalLines(lines: string[]): number {
+  return Math.max(1, lines.length);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

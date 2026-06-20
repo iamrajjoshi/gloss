@@ -43,6 +43,8 @@ import type {
   ReviewTurnSummary,
   ServerInfo,
   SourcePeekMatchReason,
+  SourcePeekRangeRequest,
+  SourcePeekRangeResponse,
   SourcePeekRequest,
   SourcePeekResponse,
   SubmitReviewRequest
@@ -58,7 +60,8 @@ import {
   REVIEW_STATUSES,
   REVIEW_UPDATE_REASONS,
   SIDES,
-  SOURCE_PEEK_MATCH_REASONS
+  SOURCE_PEEK_MATCH_REASONS,
+  SOURCE_PEEK_RANGE_MAX_LINES
 } from './types';
 
 export type JsonGuard<T> = (value: unknown) => value is T;
@@ -273,7 +276,36 @@ export function isSourcePeekResponse(value: unknown): value is SourcePeekRespons
     isNullableString(value.language) &&
     isString(value.content) &&
     isBoolean(value.truncated) &&
+    isPositiveInteger(value.totalLines) &&
+    isBoolean(value.hasMoreAbove) &&
+    isBoolean(value.hasMoreBelow) &&
     isSourcePeekMatchReason(value.matchReason)
+  );
+}
+
+export function isSourcePeekRangeRequest(value: unknown): value is SourcePeekRangeRequest {
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isOptionalString(value.turnId) &&
+    isDiffContextSource(value.source) &&
+    isOneOf(value.side, SIDES) &&
+    isPositiveInteger(value.startLine) &&
+    isPositiveInteger(value.lineCount) &&
+    value.lineCount <= SOURCE_PEEK_RANGE_MAX_LINES
+  );
+}
+
+export function isSourcePeekRangeResponse(value: unknown): value is SourcePeekRangeResponse {
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isPositiveInteger(value.startLine) &&
+    isPositiveInteger(value.totalLines) &&
+    isString(value.content) &&
+    isBoolean(value.truncated) &&
+    isBoolean(value.hasMoreAbove) &&
+    isBoolean(value.hasMoreBelow)
   );
 }
 
