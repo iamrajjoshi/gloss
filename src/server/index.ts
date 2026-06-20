@@ -29,6 +29,7 @@ import type {
   ReviewEvent,
   ReviewMeta,
   ReviewTurnSummary,
+  SourcePeekRangeRequest,
   SourcePeekRequest,
   SubmitReviewRequest
 } from '../shared/types';
@@ -41,13 +42,14 @@ import {
   isFileContentRequest,
   isOpenFileRequest,
   isResolutionRequest,
+  isSourcePeekRangeRequest,
   isSourcePeekRequest,
   isSubmitReviewRequest,
   type JsonGuard,
   parseJsonValue
 } from '../shared/validation';
 import { availableOpenFileTargets, openLocalPath } from './local-open';
-import { resolveSourcePeek } from './source-peek';
+import { readSourcePeekRange, resolveSourcePeek } from './source-peek';
 import { reviewStore } from './store';
 
 const webRoot = fileURLToPath(new URL('../web', import.meta.url));
@@ -438,6 +440,50 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       );
     } catch (error) {
       return c.json({ error: `source peek unavailable: ${formatError(error)}` }, 404);
+    }
+  });
+
+  app.post('/api/reviews/:id/source-peek/range', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isSourcePeekRangeRequest, 'source peek range request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+
+    const body: SourcePeekRangeRequest = parsed.body;
+    const turn = body.turnId ? await reviewStore.getTurn(id, body.turnId) : null;
+    if (body.turnId && !turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+    const diffPayload = turn?.diff ?? existing.diff;
+    const repoRoot = path.resolve(diffPayload.cwd);
+    const pathError = validateContextPath(repoRoot, body.filePath, 'filePath');
+    if (pathError) {
+      return c.json({ error: pathError }, 400);
+    }
+
+    const source = await resolveContextSource(diffPayload, body.source);
+    if (!source.ok) {
+      return c.json({ error: source.error }, source.status);
+    }
+
+    const sourceRef = body.side === 'L' ? source.oldRef : source.newRef;
+    try {
+      return c.json(
+        await readSourcePeekRange({
+          repoRoot,
+          sourceFilePath: body.filePath,
+          sourceRef,
+          startLine: body.startLine,
+          lineCount: body.lineCount
+        })
+      );
+    } catch (error) {
+      return c.json({ error: `source range unavailable: ${formatError(error)}` }, 404);
     }
   });
 

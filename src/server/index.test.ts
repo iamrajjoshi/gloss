@@ -11,7 +11,11 @@ import {
   globalReviewTurnMetaFile,
   globalReviewTurnResolvedFile
 } from '../shared/paths';
-import { type ReviewEvent, SOURCE_PEEK_MAX_BYTES } from '../shared/types';
+import {
+  type ReviewEvent,
+  SOURCE_PEEK_MAX_BYTES,
+  SOURCE_PEEK_RANGE_MAX_LINES
+} from '../shared/types';
 import {
   isClearReviewsResult,
   isCommitRangeDiffResponse,
@@ -26,6 +30,7 @@ import {
   isResolveResult,
   isReviewEvent,
   isReviewRecord,
+  isSourcePeekRangeResponse,
   isSourcePeekResponse,
   type JsonGuard,
   parseJson,
@@ -991,6 +996,154 @@ describe('Gloss review API global persistence', () => {
     expect(peek.truncated).toBe(true);
     expect(peek.content).toContain('export const huge');
     expect(Buffer.byteLength(peek.content, 'utf8')).toBeLessThanOrEqual(SOURCE_PEEK_MAX_BYTES);
+  });
+
+  it('loads bounded source peek ranges around large files', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const lines = Array.from(
+      { length: 1200 },
+      (_, index) => `export const value${index + 1} = '${'x'.repeat(360)}';`
+    );
+    lines[600] = 'export const target = true;';
+    await writeFile(path.join(repoRoot, 'api.ts'), `${lines.join('\n')}\n`);
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff({ code: 'export const target = true;' }))
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+
+    const peekResponse = await app.request(`/api/reviews/${created.meta.id}/source-peek`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: 'api.ts',
+        oldPath: null,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        side: 'R',
+        line: 601,
+        column: 'export const '.length,
+        symbol: 'target'
+      })
+    });
+    const peek = await responseJson(peekResponse, isSourcePeekResponse, 'source peek response');
+
+    expect(peekResponse.status).toBe(200);
+    expect(peek).toMatchObject({
+      filePath: 'api.ts',
+      line: 601,
+      startLine: 361,
+      totalLines: 1200,
+      truncated: true,
+      hasMoreAbove: true,
+      hasMoreBelow: true
+    });
+    expect(peek.content).toContain('export const target = true;');
+
+    const aboveResponse = await app.request(`/api/reviews/${created.meta.id}/source-peek/range`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: peek.filePath,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        side: 'R',
+        startLine: peek.startLine - SOURCE_PEEK_RANGE_MAX_LINES,
+        lineCount: SOURCE_PEEK_RANGE_MAX_LINES
+      })
+    });
+    const belowResponse = await app.request(`/api/reviews/${created.meta.id}/source-peek/range`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        filePath: peek.filePath,
+        turnId: created.turn?.id,
+        source: { mode: 'turn' },
+        side: 'R',
+        startLine: 1000,
+        lineCount: SOURCE_PEEK_RANGE_MAX_LINES
+      })
+    });
+    const above = await responseJson(
+      aboveResponse,
+      isSourcePeekRangeResponse,
+      'source peek range response'
+    );
+    const below = await responseJson(
+      belowResponse,
+      isSourcePeekRangeResponse,
+      'source peek range response'
+    );
+
+    expect(aboveResponse.status).toBe(200);
+    expect(above).toMatchObject({
+      filePath: 'api.ts',
+      startLine: 121,
+      totalLines: 1200,
+      hasMoreAbove: true,
+      hasMoreBelow: true
+    });
+    expect(above.content).toContain('export const value121');
+    expect(above.content).not.toContain('export const target = true;');
+    expect(belowResponse.status).toBe(200);
+    expect(below).toMatchObject({
+      filePath: 'api.ts',
+      startLine: 1000,
+      totalLines: 1200,
+      hasMoreAbove: true,
+      hasMoreBelow: false
+    });
+    expect(below.content).toContain('export const value1200');
+  });
+
+  it('rejects invalid source peek range requests', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = true;\n');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    const baseRequest = {
+      filePath: 'api.ts',
+      turnId: created.turn?.id,
+      source: { mode: 'turn' },
+      side: 'R',
+      startLine: 1,
+      lineCount: 1
+    };
+
+    const excessiveResponse = await app.request(
+      `/api/reviews/${created.meta.id}/source-peek/range`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...baseRequest, lineCount: SOURCE_PEEK_RANGE_MAX_LINES + 1 })
+      }
+    );
+    const traversalResponse = await app.request(
+      `/api/reviews/${created.meta.id}/source-peek/range`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...baseRequest, filePath: '../api.ts' })
+      }
+    );
+
+    expect(excessiveResponse.status).toBe(400);
+    expect(traversalResponse.status).toBe(400);
   });
 
   it('opens files that are present only in per-commit diffs', async () => {

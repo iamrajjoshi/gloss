@@ -1,14 +1,28 @@
 import { AlertCircle, FileSearch, GripHorizontal, LoaderCircle, X } from 'lucide-react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, UIEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { OpenFileTarget, OpenFileTargetInfo, SourcePeekResponse } from '../../shared/types';
+import type {
+  OpenFileTarget,
+  OpenFileTargetInfo,
+  SourcePeekRangeResponse,
+  SourcePeekResponse
+} from '../../shared/types';
 import type { HighlightedSourceLines, SyntaxToken } from '../syntax';
 import { useTheme } from '../theme';
 import { FileActionsMenu } from './FileActionsMenu';
+import {
+  initialLoadedSource,
+  type LoadedSourcePeek,
+  mergeLoadedSourceRange,
+  type SourcePeekRangeDirection,
+  sourcePeekRangeRequest,
+  splitSourceLines
+} from './source-peek-range';
 
 const PANEL_MARGIN = 16;
 const PANEL_MIN_WIDTH = 360;
 const PANEL_MIN_HEIGHT = 280;
+const SOURCE_PEEK_SCROLL_LOAD_THRESHOLD = 360;
 
 export type SourcePeekPanelState =
   | { status: 'loading'; symbol: string }
@@ -18,52 +32,72 @@ export type SourcePeekPanelState =
 export function SourcePeekPanel({
   openTargets,
   onCopyFileContents,
+  onLoadRange,
   onOpenFile,
   state,
   onClose
 }: {
   openTargets: OpenFileTargetInfo[];
   onCopyFileContents: (filePath: string) => Promise<string>;
+  onLoadRange: (
+    filePath: string,
+    startLine: number,
+    lineCount: number
+  ) => Promise<SourcePeekRangeResponse>;
   onOpenFile: (filePath: string, target: OpenFileTarget) => Promise<void>;
   state: SourcePeekPanelState;
   onClose: () => void;
 }) {
   const { resolvedTheme } = useTheme();
   const panelRef = useRef<HTMLElement | null>(null);
+  const codeRef = useRef<HTMLElement | null>(null);
   const targetLineRef = useRef<HTMLDivElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const pendingRectRef = useRef<PanelRect | null>(null);
   const cleanupInteractionRef = useRef<(() => void) | null>(null);
-  const [highlightedSource, setHighlightedSource] = useState<{
-    lines: HighlightedSourceLines | null;
-    response: SourcePeekResponse;
-    theme: typeof resolvedTheme;
-  } | null>(null);
-  const [wordWrap, setWordWrap] = useState(false);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const rangeLoadingRef = useRef<Record<SourcePeekRangeDirection, boolean>>({
+    above: false,
+    below: false
+  });
+  const rangeRequestIdRef = useRef<Record<SourcePeekRangeDirection, number>>({
+    above: 0,
+    below: 0
+  });
+  const responseRef = useRef<SourcePeekResponse | null>(null);
   const response = state.status === 'ready' ? state.response : null;
   const errorPresentation =
     state.status === 'error' ? sourcePeekErrorPresentation(state.message, state.symbol) : null;
+  const [highlightedSource, setHighlightedSource] = useState<{
+    lines: HighlightedSourceLines | null;
+    content: string;
+    language: string | null;
+    theme: typeof resolvedTheme;
+  } | null>(null);
+  const [loadedSource, setLoadedSource] = useState<LoadedSourcePeek | null>(() =>
+    response ? initialLoadedSource(response) : null
+  );
+  const [rangeLoading, setRangeLoading] = useState<Record<SourcePeekRangeDirection, boolean>>({
+    above: false,
+    below: false
+  });
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const [wordWrap, setWordWrap] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const sourceLines = useMemo(
-    () => (response ? splitSourceLines(response.content) : []),
-    [response]
+    () => (loadedSource ? splitSourceLines(loadedSource.content) : []),
+    [loadedSource]
   );
   const highlightedLines =
+    loadedSource &&
     response &&
-    highlightedSource?.response === response &&
+    highlightedSource?.content === loadedSource.content &&
+    highlightedSource.language === response.language &&
     highlightedSource.theme === resolvedTheme
       ? highlightedSource.lines
       : null;
-  const responseKey = response
-    ? `${response.filePath}:${response.line}:${response.targetSymbol}`
-    : state.status;
-  const [previousResponseKey, setPreviousResponseKey] = useState(responseKey);
-  if (previousResponseKey !== responseKey) {
-    setPreviousResponseKey(responseKey);
-    if (actionMessage) {
-      setActionMessage(null);
-    }
-  }
+  const sourcePeekRangeMessage = loadedSource
+    ? rangeMessageForSourcePeek(loadedSource, rangeLoading, rangeError)
+    : null;
 
   const applyPanelRect = useCallback((rect: PanelRect) => {
     pendingRectRef.current = rect;
@@ -97,6 +131,15 @@ export function SourcePeekPanel({
     document.body.style.userSelect = '';
   }, []);
 
+  const updateRangeLoading = useCallback(
+    (direction: SourcePeekRangeDirection, isLoading: boolean) => {
+      const nextLoading = { ...rangeLoadingRef.current, [direction]: isLoading };
+      rangeLoadingRef.current = nextLoading;
+      setRangeLoading(nextLoading);
+    },
+    []
+  );
+
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -117,19 +160,33 @@ export function SourcePeekPanel({
   }, [actionMessage]);
 
   useEffect(() => {
-    if (!response) {
+    responseRef.current = response;
+    rangeRequestIdRef.current = {
+      above: rangeRequestIdRef.current.above + 1,
+      below: rangeRequestIdRef.current.below + 1
+    };
+    setLoadedSource(response ? initialLoadedSource(response) : null);
+    setRangeError(null);
+    rangeLoadingRef.current = { above: false, below: false };
+    setRangeLoading({ above: false, below: false });
+    setActionMessage(null);
+  }, [response]);
+
+  useEffect(() => {
+    if (!response || !loadedSource) {
       return;
     }
     let cancelled = false;
     import('../syntax')
       .then(({ highlightSourceContent }) =>
-        highlightSourceContent(response.content, response.language, resolvedTheme)
+        highlightSourceContent(loadedSource.content, response.language, resolvedTheme)
       )
       .then((nextHighlightedLines) => {
         if (!cancelled) {
           setHighlightedSource({
             lines: nextHighlightedLines,
-            response,
+            content: loadedSource.content,
+            language: response.language,
             theme: resolvedTheme
           });
         }
@@ -138,7 +195,8 @@ export function SourcePeekPanel({
         if (!cancelled) {
           setHighlightedSource({
             lines: null,
-            response,
+            content: loadedSource.content,
+            language: response.language,
             theme: resolvedTheme
           });
         }
@@ -147,7 +205,7 @@ export function SourcePeekPanel({
     return () => {
       cancelled = true;
     };
-  }, [response, resolvedTheme]);
+  }, [loadedSource, response, resolvedTheme]);
 
   useEffect(() => {
     if (!response) {
@@ -271,6 +329,69 @@ export function SourcePeekPanel({
     window.addEventListener('pointerup', onPointerUp, { once: true });
   };
 
+  const loadSourceRange = useCallback(
+    async (direction: SourcePeekRangeDirection) => {
+      if (!response || !loadedSource || rangeLoadingRef.current[direction]) {
+        return;
+      }
+
+      const request = sourcePeekRangeRequest(loadedSource, direction);
+      if (!request) {
+        return;
+      }
+
+      const requestId = rangeRequestIdRef.current[direction] + 1;
+      rangeRequestIdRef.current = { ...rangeRequestIdRef.current, [direction]: requestId };
+      const isCurrentRequest = () =>
+        responseRef.current === response && rangeRequestIdRef.current[direction] === requestId;
+      const previousScrollHeight =
+        direction === 'above' ? (codeRef.current?.scrollHeight ?? null) : null;
+
+      updateRangeLoading(direction, true);
+      setRangeError(null);
+      try {
+        const range = await onLoadRange(response.filePath, request.startLine, request.lineCount);
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setLoadedSource((current) =>
+          current?.response === response ? mergeLoadedSourceRange(current, range) : current
+        );
+        if (direction === 'above' && previousScrollHeight !== null) {
+          window.requestAnimationFrame(() => {
+            const scroller = codeRef.current;
+            if (scroller) {
+              scroller.scrollTop += scroller.scrollHeight - previousScrollHeight;
+            }
+          });
+        }
+      } catch (reason) {
+        if (isCurrentRequest()) {
+          setRangeError(reason instanceof Error ? reason.message : String(reason));
+        }
+      } finally {
+        if (isCurrentRequest()) {
+          updateRangeLoading(direction, false);
+        }
+      }
+    },
+    [loadedSource, onLoadRange, response, updateRangeLoading]
+  );
+
+  const handleCodeScroll = useCallback(
+    (event: UIEvent<HTMLElement>) => {
+      const scroller = event.currentTarget;
+      const bottomDistance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      if (scroller.scrollTop <= SOURCE_PEEK_SCROLL_LOAD_THRESHOLD) {
+        void loadSourceRange('above');
+      }
+      if (bottomDistance <= SOURCE_PEEK_SCROLL_LOAD_THRESHOLD) {
+        void loadSourceRange('below');
+      }
+    },
+    [loadSourceRange]
+  );
+
   return (
     <aside aria-label="Source peek" className="source-peek-panel" ref={panelRef}>
       <button
@@ -354,17 +475,17 @@ export function SourcePeekPanel({
               <span className="source-peek-action-message">{actionMessage}</span>
             ) : null}
           </div>
-          {response.truncated ? (
-            <div className="source-peek-truncated">
-              Showing nearby lines from a large source file.
-            </div>
+          {sourcePeekRangeMessage ? (
+            <div className="source-peek-truncated">{sourcePeekRangeMessage}</div>
           ) : null}
           <section
             className={`source-peek-code ${wordWrap ? 'wrap-lines' : ''}`}
             aria-label={response.filePath}
+            ref={codeRef}
+            onScroll={handleCodeScroll}
           >
             {sourceLines.map((line, index) => {
-              const lineNumber = response.startLine + index;
+              const lineNumber = (loadedSource?.startLine ?? response.startLine) + index;
               const isTargetLine = lineNumber === response.line;
               return (
                 <div
@@ -495,6 +616,32 @@ function cursorForResizeEdges(edges: ResizeEdges): string {
   return 'col-resize';
 }
 
+function rangeMessageForSourcePeek(
+  loadedSource: LoadedSourcePeek,
+  rangeLoading: Record<SourcePeekRangeDirection, boolean>,
+  rangeError: string | null
+): string | null {
+  if (rangeError) {
+    return `Could not load more source: ${cleanSourcePeekErrorMessage(rangeError)}`;
+  }
+  if (rangeLoading.above && rangeLoading.below) {
+    return 'Loading more source lines above and below.';
+  }
+  if (rangeLoading.above) {
+    return 'Loading more source lines above.';
+  }
+  if (rangeLoading.below) {
+    return 'Loading more source lines below.';
+  }
+  if (loadedSource.hasMoreAbove || loadedSource.hasMoreBelow) {
+    return 'Large source file - more lines load as you scroll.';
+  }
+  if (loadedSource.truncated) {
+    return 'Source preview was shortened for a very long line.';
+  }
+  return null;
+}
+
 function sourcePeekErrorPresentation(message: string, symbol: string) {
   const cleanedMessage = cleanSourcePeekErrorMessage(message);
   if (/no definition found/i.test(cleanedMessage)) {
@@ -536,14 +683,6 @@ function sourcePeekViewportMargin(): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function splitSourceLines(contents: string): string[] {
-  const lines = contents.replace(/\r\n/g, '\n').split('\n');
-  if (lines.at(-1) === '') {
-    lines.pop();
-  }
-  return lines.length > 0 ? lines : [''];
 }
 
 function renderSourceLine(line: string, tokens: SyntaxToken[] | null) {

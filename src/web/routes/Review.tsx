@@ -40,6 +40,7 @@ import {
   fetchReview,
   fetchReviewFileContent,
   fetchSourcePeek,
+  fetchSourcePeekRange,
   openReviewFile
 } from '../api';
 import { DiffView, type SourcePeekTrigger } from '../components/DiffView';
@@ -256,13 +257,18 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     document.title = reviewDisplayTitle(nextRecord);
   }, []);
 
+  const closeSourcePeek = useCallback(() => {
+    sourcePeekRequestId.current += 1;
+    setSelectedSourcePeek(null);
+    setSourcePeekState(null);
+  }, []);
+
   const resetTurnView = useCallback(() => {
     setCommitView({ mode: 'all' });
     dispatchRangeDiff({ type: 'idle' });
-    setSelectedSourcePeek(null);
-    setSourcePeekState(null);
+    closeSourcePeek();
     setDraft(null);
-  }, [setDraft]);
+  }, [closeSourcePeek, setDraft]);
 
   const reloadReview = useCallback(async () => {
     const nextRecord = await fetchReview(reviewId);
@@ -543,6 +549,20 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
       }
     }
   };
+  const handleSourcePeekRange = async (filePath: string, startLine: number, lineCount: number) => {
+    if (!selectedSourcePeek) {
+      throw new Error('source peek selection is no longer available');
+    }
+    return fetchSourcePeekRange({
+      reviewId,
+      turnId: selectedTurn.id,
+      source: contextSource,
+      side: selectedSourcePeek.side,
+      filePath,
+      startLine,
+      lineCount
+    });
+  };
   const fileTreeProps = {
     activeFilePath: visibleActiveFilePath,
     extensionBuckets,
@@ -595,6 +615,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                     if (nextCommitView.mode !== 'range') {
                       dispatchRangeDiff({ type: 'idle' });
                     }
+                    closeSourcePeek();
                     setDraft(null);
                   }}
                 />
@@ -737,12 +758,9 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                 openTargets={openTargets}
                 state={sourcePeekState}
                 onCopyFileContents={handleCopySourceFileContents}
+                onLoadRange={handleSourcePeekRange}
                 onOpenFile={handleOpenSourceFile}
-                onClose={() => {
-                  sourcePeekRequestId.current += 1;
-                  setSelectedSourcePeek(null);
-                  setSourcePeekState(null);
-                }}
+                onClose={closeSourcePeek}
               />,
               document.body
             )

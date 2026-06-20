@@ -163,6 +163,7 @@ export interface DiffContextResponse {
 }
 
 export const SOURCE_PEEK_MAX_BYTES = 350_000;
+export const SOURCE_PEEK_RANGE_MAX_LINES = 240;
 
 export const SOURCE_PEEK_MATCH_REASONS = ['import', 'same-file', 'repo-search', 'module'] as const;
 
@@ -189,7 +190,29 @@ export interface SourcePeekResponse {
   language: string | null;
   content: string;
   truncated: boolean;
+  totalLines: number;
+  hasMoreAbove: boolean;
+  hasMoreBelow: boolean;
   matchReason: SourcePeekMatchReason;
+}
+
+export interface SourcePeekRangeRequest {
+  filePath: string;
+  turnId?: string;
+  source: DiffContextSource;
+  side: Side;
+  startLine: number;
+  lineCount: number;
+}
+
+export interface SourcePeekRangeResponse {
+  filePath: string;
+  startLine: number;
+  totalLines: number;
+  content: string;
+  truncated: boolean;
+  hasMoreAbove: boolean;
+  hasMoreBelow: boolean;
 }
 
 export const REVIEW_SCOPE_MODES = ['all', 'single', 'range'] as const;
