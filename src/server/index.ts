@@ -19,14 +19,17 @@ import type {
   DiffContextSource,
   DiffFile,
   DiffPayload,
+  FileContentResponse,
   HealthResponse,
   ListReviewsResponse,
   OpenFileResponse,
+  OpenFileTargetsResponse,
   OpenResult,
   ResolutionRequest,
   ReviewEvent,
   ReviewMeta,
   ReviewTurnSummary,
+  SourcePeekRequest,
   SubmitReviewRequest
 } from '../shared/types';
 import { DIFF_CONTEXT_MAX_LINES } from '../shared/types';
@@ -35,13 +38,16 @@ import {
   isCommitRangeDiffRequest,
   isDiffContextRequest,
   isDiffPayload,
+  isFileContentRequest,
   isOpenFileRequest,
   isResolutionRequest,
+  isSourcePeekRequest,
   isSubmitReviewRequest,
   type JsonGuard,
   parseJsonValue
 } from '../shared/validation';
-import { openLocalPath } from './local-open';
+import { availableOpenFileTargets, openLocalPath } from './local-open';
+import { resolveSourcePeek } from './source-peek';
 import { reviewStore } from './store';
 
 const webRoot = fileURLToPath(new URL('../web', import.meta.url));
@@ -75,6 +81,11 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       activeReviews: reviews.filter((review) => review.status === 'pending').length,
       ...options.health?.()
     };
+    return c.json(response);
+  });
+
+  app.get('/api/open-targets', async (c) => {
+    const response: OpenFileTargetsResponse = { targets: await availableOpenFileTargets() };
     return c.json(response);
   });
 
@@ -365,18 +376,83 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     }
   });
 
-  app.post('/api/reviews/:id/files/open', async (c) => {
+  app.post('/api/reviews/:id/source-peek', async (c) => {
     const id = c.req.param('id');
     const existing = await reviewStore.get(id);
     if (!existing) {
       return c.json({ error: 'review not found' }, 404);
     }
-    const parsed = await readJsonBody(c, isOpenFileRequest, 'open file request');
+    const parsed = await readJsonBody(c, isSourcePeekRequest, 'source peek request');
     if (!parsed.ok) {
       return parsed.response;
     }
 
-    const { filePath, turnId } = parsed.body;
+    const body: SourcePeekRequest = parsed.body;
+    const turn = body.turnId ? await reviewStore.getTurn(id, body.turnId) : null;
+    if (body.turnId && !turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+    const diffPayload = turn?.diff ?? existing.diff;
+    const repoRoot = path.resolve(diffPayload.cwd);
+    const pathError =
+      validateContextPath(repoRoot, body.filePath, 'filePath') ??
+      (body.oldPath ? validateContextPath(repoRoot, body.oldPath, 'oldPath') : null);
+    if (pathError) {
+      return c.json({ error: pathError }, 400);
+    }
+
+    const source = await resolveContextSource(diffPayload, body.source);
+    if (!source.ok) {
+      return c.json({ error: source.error }, source.status);
+    }
+
+    const reviewFile = source.files.find((file) => file.path === body.filePath);
+    if (!reviewFile) {
+      return c.json({ error: 'file is not part of this review context' }, 404);
+    }
+    if ((reviewFile.oldPath ?? null) !== body.oldPath) {
+      return c.json({ error: 'oldPath does not match the reviewed file' }, 400);
+    }
+    if (reviewFile.isBinary) {
+      return c.json({ error: 'binary file source peek is not available' }, 409);
+    }
+    if (body.side === 'L' && reviewFile.isNew) {
+      return c.json({ error: 'new files do not have an old-side source' }, 409);
+    }
+    if (body.side === 'R' && reviewFile.isDeleted) {
+      return c.json({ error: 'deleted files do not have a new-side source' }, 409);
+    }
+
+    const sourceFilePath = body.side === 'L' ? (body.oldPath ?? body.filePath) : body.filePath;
+    const sourceRef = body.side === 'L' ? source.oldRef : source.newRef;
+    try {
+      return c.json(
+        await resolveSourcePeek({
+          repoRoot,
+          sourceFilePath,
+          sourceRef,
+          symbol: body.symbol,
+          line: body.line,
+          column: body.column
+        })
+      );
+    } catch (error) {
+      return c.json({ error: `source peek unavailable: ${formatError(error)}` }, 404);
+    }
+  });
+
+  app.post('/api/reviews/:id/files/content', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isFileContentRequest, 'file content request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+
+    const { filePath, scope = 'review', turnId } = parsed.body;
     if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath)) {
       return c.json({ error: 'filePath must be a repo-relative path' }, 400);
     }
@@ -391,16 +467,93 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     if (turnId && !turn) {
       return c.json({ error: 'turn not found' }, 404);
     }
-    const diffPayload = turn?.diff ?? existing.diff;
-    const reviewFiles = [
-      ...diffPayload.files,
-      ...(diffPayload.commitDiffs ?? []).flatMap((commitDiff) => commitDiff.files)
-    ].filter((file) => file.path === filePath);
-    if (reviewFiles.length === 0) {
-      return c.json({ error: 'file is not part of this review' }, 404);
+
+    if (scope === 'review') {
+      const diffPayload = turn?.diff ?? existing.diff;
+      const reviewFiles = [
+        ...diffPayload.files,
+        ...(diffPayload.commitDiffs ?? []).flatMap((commitDiff) => commitDiff.files)
+      ].filter((file) => file.path === filePath);
+      if (reviewFiles.length === 0) {
+        return c.json({ error: 'file is not part of this review' }, 404);
+      }
+      if (reviewFiles.every((file) => file.isDeleted)) {
+        return c.json({ error: 'deleted files cannot be copied' }, 409);
+      }
+      if (reviewFiles.some((file) => file.isBinary)) {
+        return c.json({ error: 'binary file contents cannot be copied' }, 409);
+      }
     }
-    if (reviewFiles.every((file) => file.isDeleted)) {
-      return c.json({ error: 'deleted files cannot be opened locally' }, 409);
+
+    let realRepoRoot: string;
+    let realFilePath: string;
+    try {
+      [realRepoRoot, realFilePath] = await Promise.all([
+        realpath(repoRoot),
+        realpath(requestedAbsolutePath)
+      ]);
+    } catch (error) {
+      if (isFileNotFound(error)) {
+        return c.json({ error: 'file no longer exists on disk' }, 404);
+      }
+      throw error;
+    }
+
+    if (!isPathWithin(realRepoRoot, realFilePath)) {
+      return c.json({ error: 'filePath must stay within the review cwd' }, 400);
+    }
+
+    const fileStats = await stat(realFilePath);
+    if (!fileStats.isFile()) {
+      return c.json({ error: 'path is not a file' }, 409);
+    }
+
+    const response: FileContentResponse = {
+      content: await readFile(realFilePath, 'utf8'),
+      filePath
+    };
+    return c.json(response);
+  });
+
+  app.post('/api/reviews/:id/files/open', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isOpenFileRequest, 'open file request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+
+    const { filePath, scope = 'review', target, turnId } = parsed.body;
+    if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath)) {
+      return c.json({ error: 'filePath must be a repo-relative path' }, 400);
+    }
+
+    const repoRoot = path.resolve(existing.diff.cwd);
+    const requestedAbsolutePath = path.resolve(repoRoot, filePath);
+    if (!isPathWithin(repoRoot, requestedAbsolutePath)) {
+      return c.json({ error: 'filePath must stay within the review cwd' }, 400);
+    }
+
+    const turn = turnId ? await reviewStore.getTurn(id, turnId) : null;
+    if (turnId && !turn) {
+      return c.json({ error: 'turn not found' }, 404);
+    }
+
+    if (scope === 'review') {
+      const diffPayload = turn?.diff ?? existing.diff;
+      const reviewFiles = [
+        ...diffPayload.files,
+        ...(diffPayload.commitDiffs ?? []).flatMap((commitDiff) => commitDiff.files)
+      ].filter((file) => file.path === filePath);
+      if (reviewFiles.length === 0) {
+        return c.json({ error: 'file is not part of this review' }, 404);
+      }
+      if (reviewFiles.every((file) => file.isDeleted)) {
+        return c.json({ error: 'deleted files cannot be opened locally' }, 409);
+      }
     }
 
     let realRepoRoot: string;
@@ -427,7 +580,7 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     }
 
     try {
-      await openLocalPath(realFilePath);
+      target ? await openLocalPath(realFilePath, target) : await openLocalPath(realFilePath);
     } catch (error) {
       return c.json({ error: `could not open file: ${formatError(error)}` }, 500);
     }

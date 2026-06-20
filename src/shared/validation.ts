@@ -19,10 +19,16 @@ import type {
   DiffPayload,
   DiffStats,
   FeedbackBundle,
+  FileContentRequest,
+  FileContentResponse,
   HealthResponse,
   ListReviewsResponse,
   OpenFileRequest,
   OpenFileResponse,
+  OpenFileScope,
+  OpenFileTarget,
+  OpenFileTargetInfo,
+  OpenFileTargetsResponse,
   OpenResult,
   ResolutionBundle,
   ResolutionRequest,
@@ -36,17 +42,23 @@ import type {
   ReviewTurnMeta,
   ReviewTurnSummary,
   ServerInfo,
+  SourcePeekMatchReason,
+  SourcePeekRequest,
+  SourcePeekResponse,
   SubmitReviewRequest
 } from './types';
 import {
   DIFF_FALLBACK_REASONS,
   DIFF_LINE_TYPES,
   DIFF_SCOPE_MODES,
+  OPEN_FILE_SCOPES,
+  OPEN_FILE_TARGETS,
   RESOLUTION_STATUSES,
   REVIEW_SCOPE_MODES,
   REVIEW_STATUSES,
   REVIEW_UPDATE_REASONS,
-  SIDES
+  SIDES,
+  SOURCE_PEEK_MATCH_REASONS
 } from './types';
 
 export type JsonGuard<T> = (value: unknown) => value is T;
@@ -162,11 +174,34 @@ export function isOpenResult(value: unknown): value is OpenResult {
 }
 
 export function isOpenFileRequest(value: unknown): value is OpenFileRequest {
-  return isRecord(value) && isString(value.filePath) && isOptionalString(value.turnId);
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isOptionalString(value.turnId) &&
+    isOptional(value.scope, isOpenFileScope) &&
+    isOptional(value.target, isOpenFileTarget)
+  );
 }
 
 export function isOpenFileResponse(value: unknown): value is OpenFileResponse {
   return isRecord(value) && value.ok === true && isString(value.path);
+}
+
+export function isOpenFileTargetsResponse(value: unknown): value is OpenFileTargetsResponse {
+  return isRecord(value) && isArrayOf(value.targets, isOpenFileTargetInfo);
+}
+
+export function isFileContentRequest(value: unknown): value is FileContentRequest {
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isOptionalString(value.turnId) &&
+    isOptional(value.scope, isOpenFileScope)
+  );
+}
+
+export function isFileContentResponse(value: unknown): value is FileContentResponse {
+  return isRecord(value) && isString(value.filePath) && isString(value.content);
 }
 
 export function isCommitRangeDiffRequest(value: unknown): value is CommitRangeDiffRequest {
@@ -209,6 +244,36 @@ export function isDiffContextResponse(value: unknown): value is DiffContextRespo
     isPositiveInteger(value.oldStart) &&
     isPositiveInteger(value.newStart) &&
     isArrayOf(value.lines, isDiffLine)
+  );
+}
+
+export function isSourcePeekRequest(value: unknown): value is SourcePeekRequest {
+  return (
+    isRecord(value) &&
+    isString(value.filePath) &&
+    isNullableString(value.oldPath) &&
+    isOptionalString(value.turnId) &&
+    isDiffContextSource(value.source) &&
+    isOneOf(value.side, SIDES) &&
+    isPositiveInteger(value.line) &&
+    isNonNegativeInteger(value.column) &&
+    isIdentifier(value.symbol)
+  );
+}
+
+export function isSourcePeekResponse(value: unknown): value is SourcePeekResponse {
+  return (
+    isRecord(value) &&
+    isString(value.symbol) &&
+    isString(value.targetSymbol) &&
+    isString(value.filePath) &&
+    isPositiveInteger(value.startLine) &&
+    isPositiveInteger(value.line) &&
+    isNonNegativeInteger(value.column) &&
+    isNullableString(value.language) &&
+    isString(value.content) &&
+    isBoolean(value.truncated) &&
+    isSourcePeekMatchReason(value.matchReason)
   );
 }
 
@@ -571,6 +636,22 @@ function isResolutionStatus(value: unknown): value is ResolutionBundle['status']
   return isOneOf(value, RESOLUTION_STATUSES);
 }
 
+function isSourcePeekMatchReason(value: unknown): value is SourcePeekMatchReason {
+  return isOneOf(value, SOURCE_PEEK_MATCH_REASONS);
+}
+
+function isOpenFileScope(value: unknown): value is OpenFileScope {
+  return isOneOf(value, OPEN_FILE_SCOPES);
+}
+
+function isOpenFileTarget(value: unknown): value is OpenFileTarget {
+  return isOneOf(value, OPEN_FILE_TARGETS);
+}
+
+function isOpenFileTargetInfo(value: unknown): value is OpenFileTargetInfo {
+  return isRecord(value) && isOpenFileTarget(value.target) && isString(value.label);
+}
+
 function isReviewUpdateReason(
   value: unknown
 ): value is Extract<ReviewEvent, { type: 'review.updated' }>['reason'] {
@@ -607,6 +688,14 @@ function isNumber(value: unknown): value is number {
 
 function isPositiveInteger(value: unknown): value is number {
   return isNumber(value) && Number.isInteger(value) && value > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isNumber(value) && Number.isInteger(value) && value >= 0;
+}
+
+function isIdentifier(value: unknown): value is string {
+  return isString(value) && /^[A-Za-z_$][\w$]*$/.test(value);
 }
 
 function isOptionalNumber(value: unknown): value is number | undefined {

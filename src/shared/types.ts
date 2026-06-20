@@ -162,6 +162,36 @@ export interface DiffContextResponse {
   lines: DiffLine[];
 }
 
+export const SOURCE_PEEK_MAX_BYTES = 350_000;
+
+export const SOURCE_PEEK_MATCH_REASONS = ['import', 'same-file', 'repo-search', 'module'] as const;
+
+export type SourcePeekMatchReason = (typeof SOURCE_PEEK_MATCH_REASONS)[number];
+
+export interface SourcePeekRequest {
+  filePath: string;
+  oldPath: string | null;
+  turnId?: string;
+  source: DiffContextSource;
+  side: Side;
+  line: number;
+  column: number;
+  symbol: string;
+}
+
+export interface SourcePeekResponse {
+  symbol: string;
+  targetSymbol: string;
+  filePath: string;
+  startLine: number;
+  line: number;
+  column: number;
+  language: string | null;
+  content: string;
+  truncated: boolean;
+  matchReason: SourcePeekMatchReason;
+}
+
 export const REVIEW_SCOPE_MODES = ['all', 'single', 'range'] as const;
 
 export type ReviewScope =
@@ -386,12 +416,75 @@ export interface ResolutionRequest {
   turn?: string;
 }
 
+export const OPEN_FILE_SCOPES = ['review', 'repo'] as const;
+
+export type OpenFileScope = (typeof OPEN_FILE_SCOPES)[number];
+
+export const OPEN_FILE_TARGETS = [
+  'default',
+  'vscode',
+  'vscode-insiders',
+  'vscodium',
+  'cursor',
+  'sublime',
+  'zed',
+  'windsurf',
+  'webstorm',
+  'intellij',
+  'pycharm',
+  'goland',
+  'phpstorm',
+  'rubymine',
+  'clion',
+  'datagrip',
+  'android-studio',
+  'fleet',
+  'neovide',
+  'macvim',
+  'emacs',
+  'lapce',
+  'textmate',
+  'bbedit',
+  'coteditor',
+  'nova',
+  'textedit',
+  'xcode',
+  'terminal',
+  'iterm2',
+  'ghostty',
+  'folder'
+] as const;
+
+export type OpenFileTarget = (typeof OPEN_FILE_TARGETS)[number];
+
 export interface OpenFileRequest {
   filePath: string;
   turnId?: string;
+  scope?: OpenFileScope;
+  target?: OpenFileTarget;
 }
 
 export interface OpenFileResponse {
   ok: true;
   path: string;
+}
+
+export interface OpenFileTargetInfo {
+  target: OpenFileTarget;
+  label: string;
+}
+
+export interface OpenFileTargetsResponse {
+  targets: OpenFileTargetInfo[];
+}
+
+export interface FileContentRequest {
+  filePath: string;
+  turnId?: string;
+  scope?: OpenFileScope;
+}
+
+export interface FileContentResponse {
+  filePath: string;
+  content: string;
 }
