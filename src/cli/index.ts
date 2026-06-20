@@ -414,7 +414,7 @@ async function watchReviewWithReconnect(
       return { event, info };
     } catch (error) {
       if (isWatchTimeout(error)) {
-        throw error;
+        throw new Error(`watch timed out after ${timeoutSeconds} seconds`);
       }
       if (!isReconnectableWatchError(error)) {
         throw error;
