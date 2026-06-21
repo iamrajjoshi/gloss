@@ -39,7 +39,8 @@ export interface ClearReviewsResult {
   };
 }
 
-export interface Comment {
+export interface LineComment {
+  kind?: 'line';
   id: string;
   filePath: string;
   startLine: number;
@@ -49,6 +50,15 @@ export interface Comment {
   originalSnippet: string;
   createdAt: string;
 }
+
+export interface GeneralComment {
+  kind: 'general';
+  id: string;
+  body: string;
+  createdAt: string;
+}
+
+export type Comment = LineComment | GeneralComment;
 
 export const DIFF_LINE_TYPES = ['context', 'add', 'delete'] as const;
 

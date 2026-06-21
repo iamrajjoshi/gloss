@@ -10,7 +10,7 @@ description: Open local working-tree or branch changes in Gloss for browser revi
 1. From the repo root, run `gloss open --json` unless the user names a base ref.
 2. Leave it running; it waits until browser submission. Use `--no-watch` only when the user only wants the review opened.
 3. Parse the JSON output and read `feedbackPath`.
-4. Apply feedback in file/line order unless "Discussion Mode" applies.
+4. Apply general comments first, then file/line comments in file and line order unless "Discussion Mode" applies.
 5. Validate with the narrowest relevant checks.
 6. Resolve handled feedback with `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"` when useful, then `gloss resolve <reviewId> --summary "<what changed>"`.
 7. For another pass on the same work, run `gloss open --review <reviewId> --json`; use a fresh `gloss open --json` only for unrelated work.
@@ -25,7 +25,7 @@ and "propose first".
 When discussing:
 
 1. Read every comment in `feedback.json` before editing. Do not edit files yet.
-2. Group comments by file. Restate each comment in one line, propose the change, and flag conflicts/out-of-scope items.
+2. Group general comments first, then file comments by file. Restate each comment in one line, propose the change, and flag conflicts/out-of-scope items.
 3. Ask which items to apply, modify, or skip, then wait for the answer.
 4. Apply only approved items, validate, then resolve as usual. Mention skipped items in the resolution summary.
 

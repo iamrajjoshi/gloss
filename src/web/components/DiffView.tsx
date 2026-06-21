@@ -9,12 +9,14 @@ import {
 } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { isLineComment } from '../../shared/comments';
 import { diffLineKey, diffLineNumber, diffLineSide } from '../../shared/diff-lines';
 import type {
   DiffContextSource,
   DiffFile,
   DiffLine,
   DiffPayload,
+  LineComment,
   OpenFileTarget,
   OpenFileTargetInfo,
   ReviewRecord,
@@ -64,6 +66,10 @@ export interface SourcePeekTrigger {
 
 const EMPTY_OPEN_TARGETS: OpenFileTargetInfo[] = [];
 
+export interface HiddenDiffInfo {
+  presetLabels: string[];
+}
+
 export function DiffView({
   activeFilePath = null,
   contextSource,
@@ -81,7 +87,9 @@ export function DiffView({
   selectedSourcePeek = null,
   onCopyFileContents,
   onOpenFile = () => undefined,
-  onSourcePeek = () => undefined
+  onSourcePeek = () => undefined,
+  hiddenFiles = new Map<string, HiddenDiffInfo>(),
+  onRevealHiddenFile = () => undefined
 }: {
   activeFilePath?: string | null;
   contextSource?: DiffContextSource;
@@ -100,6 +108,8 @@ export function DiffView({
   onCopyFileContents?: (filePath: string) => Promise<string>;
   onOpenFile?: (filePath: string, target: OpenFileTarget) => void | Promise<void>;
   onSourcePeek?: (trigger: SourcePeekTrigger) => void;
+  hiddenFiles?: Map<string, HiddenDiffInfo>;
+  onRevealHiddenFile?: (filePath: string) => void;
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const expandedActiveFilePath = useRef(activeFilePath);
@@ -136,6 +146,7 @@ export function DiffView({
         ? (emptyState ?? <EmptyDiff record={record} />)
         : renderedFiles.map((file) => {
             const collapsed = collapsedFiles.has(file.path);
+            const hiddenInfo = hiddenFiles.get(file.path) ?? null;
             return (
               <article
                 className={`file-card ${activeFilePath === file.path ? 'active' : ''}`}
@@ -163,7 +174,12 @@ export function DiffView({
                   onViewedChange={(viewed) => handleViewedChange(file.path, viewed)}
                   onOpenFile={(target) => onOpenFile(file.path, target)}
                 />
-                {collapsed ? null : (
+                {collapsed ? null : hiddenInfo ? (
+                  <HiddenDiffPlaceholder
+                    info={hiddenInfo}
+                    onReveal={() => onRevealHiddenFile(file.path)}
+                  />
+                ) : (
                   <DiffFileTable
                     contextSource={contextSource}
                     file={file}
@@ -185,6 +201,47 @@ export function DiffView({
           })}
     </section>
   );
+}
+
+function HiddenDiffPlaceholder({ info, onReveal }: { info: HiddenDiffInfo; onReveal: () => void }) {
+  const hiddenFileKindText = formatHiddenFileKindLabels(info.presetLabels);
+  return (
+    <div className="hidden-diff-placeholder">
+      <div className="hidden-diff-skeleton" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="hidden-diff-message">
+        <button className="hidden-diff-load" type="button" onClick={onReveal}>
+          Load diff
+        </button>
+        <p>{hiddenFileKindText} are not rendered by default.</p>
+      </div>
+    </div>
+  );
+}
+
+function formatHiddenFileKindLabels(labels: string[]): string {
+  if (labels.length === 0) {
+    return 'Files matching selected presets';
+  }
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${lowercaseInitial(labels[1])}`;
+  }
+  return `${labels
+    .slice(0, -1)
+    .map((label, index) => (index === 0 ? label : lowercaseInitial(label)))
+    .join(', ')}, and ${lowercaseInitial(labels[labels.length - 1])}`;
+}
+
+function lowercaseInitial(value: string): string {
+  return `${value.charAt(0).toLowerCase()}${value.slice(1)}`;
 }
 
 function EmptyDiff({ record }: { record: ReviewRecord }) {
@@ -272,7 +329,9 @@ function DiffFileTable({
     [resolution]
   );
 
-  const fileComments = comments.filter((comment) => comment.filePath === file.path);
+  const fileComments = comments.filter(
+    (comment): comment is LineComment => isLineComment(comment) && comment.filePath === file.path
+  );
   const dragVisualRange =
     dragStart && dragEnd && dragStart.filePath === file.path && dragStart.side === dragEnd.side
       ? visualRangeFor(visualIndexByLine, dragStart.side, dragStart.line, dragEnd.line)
@@ -548,6 +607,7 @@ function DiffFileTable({
           return (
             <div
               className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
+              data-comment-id={comment.id}
               key={comment.id}
             >
               {resolvedComment ? <CheckCircle2 size={14} /> : <MessageSquare size={14} />}
@@ -816,14 +876,28 @@ function SourcePeekText({
           key={`${offsetBase}:${matchIndex}:${identifier}`}
           style={style}
           tabIndex={-1}
+          title="Command-click or Control-click to peek source"
           type="button"
           onClick={(event) => {
+            if (!event.metaKey && !event.ctrlKey) {
+              return;
+            }
             event.preventDefault();
             event.stopPropagation();
             onSourcePeek(identifier, column);
           }}
           onMouseDown={(event) => {
+            if (event.metaKey || event.ctrlKey) {
+              event.preventDefault();
+            }
+          }}
+          onContextMenu={(event) => {
+            if (!event.metaKey && !event.ctrlKey) {
+              return;
+            }
             event.preventDefault();
+            event.stopPropagation();
+            onSourcePeek(identifier, column);
           }}
           onKeyDown={(event) => {
             if (event.key !== 'Enter' && event.key !== ' ') {

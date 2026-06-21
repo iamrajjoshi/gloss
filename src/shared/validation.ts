@@ -631,9 +631,15 @@ function isDiffLine(value: unknown): value is DiffLine {
 }
 
 function isComment(value: unknown): value is Comment {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.kind === 'general') {
+    return isString(value.id) && isString(value.body) && isString(value.createdAt);
+  }
   return (
-    isRecord(value) &&
     isString(value.id) &&
+    (value.kind === undefined || value.kind === 'line') &&
     isString(value.filePath) &&
     isNumber(value.startLine) &&
     isNumber(value.endLine) &&

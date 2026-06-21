@@ -1,3 +1,4 @@
+import { compareFilePaths } from '../../shared/file-order';
 import type { DiffFile } from '../../shared/types';
 
 export const NO_EXTENSION_ID = '__gloss_no_extension__';
@@ -168,7 +169,7 @@ function sortTree(directory: FileTreeDirectoryNode) {
     if (left.type !== right.type) {
       return left.type === 'directory' ? -1 : 1;
     }
-    return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+    return compareFilePaths(left.name, right.name);
   });
 
   for (const child of directory.children) {

@@ -122,9 +122,16 @@ choose a different retention window.
 ## Review UI
 
 In the browser review, drag over a changed line or range to open a draft
-comment. Use `Command+Enter` to save the active draft comment. Use
-`Command+Shift+Enter` to submit the review; this matches the Submit button and
-includes already-saved comments only.
+comment. Add review-level general comments from the submit bar when the feedback
+is not tied to one line. Use `Command+Enter` to save the active draft comment.
+Use `Command+Shift+Enter` to submit the review; this matches the Submit button
+and includes already-saved comments only.
+
+Lockfiles are hidden by default in the browser review and stay one click away in
+the hidden-files banner. Use the file filter menu to also hide boring files such
+as snapshots, generated files, and vendored files. These filters affect only the
+browser view: submitted feedback and review artifacts still keep the full
+captured diff.
 
 When branch reviews include per-commit diffs, the commit picker changes only the
 current preview. Gloss persists that selected scope when the review is submitted,
@@ -148,9 +155,10 @@ Submitted reviews are written to:
 ```
 
 `feedback.json` is the machine-readable payload and includes `reviewScope` for
-submitted commit-preview scope. `feedback.md` is a readable summary ordered by
-file and line. `resolved.json` is mutable resolution progress for individual
-comments and the turn. After applying feedback, use
+submitted commit-preview scope. `feedback.md` is a readable summary with
+general comments first, then file comments ordered by path and line.
+`resolved.json` is mutable resolution progress for individual comments and the
+turn. After applying feedback, use
 `gloss resolve <reviewId> --comment <commentId> --summary "..."` for a single
 comment or `gloss resolve <reviewId> --turn <id-or-index> --summary "..."` for a
 specific turn. Without `--turn`, whole-review resolution targets the latest
