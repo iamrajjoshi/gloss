@@ -2,7 +2,7 @@ const skillInstallCommand = 'npx skills add iamrajjoshi/gloss --skill gloss -g -
 const skillWorkflow = `1. Run gloss open --json from the repo root unless the user names a base ref.
 2. Wait for the browser review to be submitted.
 3. Read feedbackPath from the JSON output.
-4. Address each comment in file and line order.
+4. Address general comments first, then file comments in file and line order.
 5. Validate the fix with the narrowest relevant checks.
 6. Optionally mark individual comments handled:
    gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"
@@ -78,6 +78,10 @@ export function SetupPage() {
         <p>
           In the browser review, <code>Command+Enter</code> saves the active draft comment and{' '}
           <code>Command+Shift+Enter</code> submits already-saved comments.
+        </p>
+        <p>
+          Gloss hides lockfiles by default in the browser review. Use browser-only filters to also
+          hide snapshots, generated code, and vendored code while reviewing.
         </p>
         <p>Start a fresh session with the same command for follow-up diffs.</p>
       </section>

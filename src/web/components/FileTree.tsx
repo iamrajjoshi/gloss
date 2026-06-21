@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { BORING_FILE_PRESET_INFO, type BoringFilePreset } from '../../shared/boring-files';
 import type { DiffFile } from '../../shared/types';
 import {
   buildFileTree,
@@ -26,11 +27,15 @@ interface FileTreeProps {
   extensionBuckets: ExtensionBucket[];
   files: DiffFile[];
   filteredFiles: DiffFile[];
+  hiddenBoringFileCount: number;
+  hiddenBoringPresets: Set<BoringFilePreset>;
   onCollapse?: () => void;
   onClearExtensions: () => void;
   onFileSelect: (filePath: string) => void;
   onSearchChange: (query: string) => void;
   onSelectAllExtensions: () => void;
+  onShowAllBoringFiles: () => void;
+  onToggleBoringPreset: (preset: BoringFilePreset) => void;
   onToggleExtension: (extensionId: string) => void;
   searchQuery: string;
   selectedExtensionIds: Set<string>;
@@ -38,8 +43,12 @@ interface FileTreeProps {
 
 interface ExtensionMenuProps {
   buckets: ExtensionBucket[];
+  hiddenBoringFileCount: number;
+  hiddenBoringPresets: Set<BoringFilePreset>;
   onClear: () => void;
   onSelectAll: () => void;
+  onShowAllBoringFiles: () => void;
+  onToggleBoringPreset: (preset: BoringFilePreset) => void;
   onToggle: (extensionId: string) => void;
   selectedExtensionIds: Set<string>;
 }
@@ -49,11 +58,15 @@ export function FileTree({
   extensionBuckets,
   files,
   filteredFiles,
+  hiddenBoringFileCount,
+  hiddenBoringPresets,
   onCollapse,
   onClearExtensions,
   onFileSelect,
   onSearchChange,
   onSelectAllExtensions,
+  onShowAllBoringFiles,
+  onToggleBoringPreset,
   onToggleExtension,
   searchQuery,
   selectedExtensionIds
@@ -71,6 +84,7 @@ export function FileTree({
   }, [collapsedDirectoryIds, tree]);
   const selectedCount = selectedExtensionIds.size;
   const extensionFilterActive = selectedCount !== extensionBuckets.length;
+  const boringFilterActive = hiddenBoringPresets.size > 0;
 
   useEffect(() => {
     if (!filterMenuOpen) {
@@ -143,10 +157,12 @@ export function FileTree({
         </label>
         <div className="file-tree-filter-shell" ref={filterShellRef}>
           <button
-            aria-label="Filter by file extension"
+            aria-label="Filter files"
             aria-expanded={filterMenuOpen}
-            className={`file-tree-filter-button ${extensionFilterActive ? 'active' : ''}`}
-            title="Filter by file extension"
+            className={`file-tree-filter-button ${
+              extensionFilterActive || boringFilterActive ? 'active' : ''
+            }`}
+            title="Filter files"
             type="button"
             onClick={() => setFilterMenuOpen((open) => !open)}
           >
@@ -155,9 +171,13 @@ export function FileTree({
           {filterMenuOpen ? (
             <ExtensionMenu
               buckets={extensionBuckets}
+              hiddenBoringFileCount={hiddenBoringFileCount}
+              hiddenBoringPresets={hiddenBoringPresets}
               selectedExtensionIds={selectedExtensionIds}
               onClear={onClearExtensions}
               onSelectAll={onSelectAllExtensions}
+              onShowAllBoringFiles={onShowAllBoringFiles}
+              onToggleBoringPreset={onToggleBoringPreset}
               onToggle={onToggleExtension}
             />
           ) : null}
@@ -167,6 +187,11 @@ export function FileTree({
         <span>
           {filteredFiles.length} of {files.length} {files.length === 1 ? 'file' : 'files'}
         </span>
+        {hiddenBoringFileCount > 0 ? (
+          <span>
+            {hiddenBoringFileCount} hidden {hiddenBoringFileCount === 1 ? 'diff' : 'diffs'}
+          </span>
+        ) : null}
       </div>
       {filteredFiles.length === 0 ? (
         <div className="file-tree-empty">
@@ -193,8 +218,12 @@ export function FileTree({
 
 function ExtensionMenu({
   buckets,
+  hiddenBoringFileCount,
+  hiddenBoringPresets,
   onClear,
   onSelectAll,
+  onShowAllBoringFiles,
+  onToggleBoringPreset,
   onToggle,
   selectedExtensionIds
 }: ExtensionMenuProps) {
@@ -229,6 +258,42 @@ function ExtensionMenu({
             </button>
           );
         })}
+      </div>
+      <div className="extension-popover-section">
+        <div className="extension-popover-header">
+          <span>Hide boring files</span>
+          <div className="extension-popover-actions">
+            <button type="button" onClick={onShowAllBoringFiles}>
+              Show all
+            </button>
+          </div>
+        </div>
+        <div className="extension-options">
+          {BORING_FILE_PRESET_INFO.map((preset) => {
+            const selected = hiddenBoringPresets.has(preset.id);
+            return (
+              <button
+                aria-checked={selected}
+                className="extension-option"
+                key={preset.id}
+                role="menuitemcheckbox"
+                type="button"
+                onClick={() => onToggleBoringPreset(preset.id)}
+              >
+                <span className={`extension-check ${selected ? 'checked' : ''}`}>
+                  {selected ? <Check size={13} /> : null}
+                </span>
+                <span>{preset.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        {hiddenBoringFileCount > 0 ? (
+          <div className="extension-popover-note">
+            {hiddenBoringFileCount} {hiddenBoringFileCount === 1 ? 'diff' : 'diffs'} hidden by
+            presets
+          </div>
+        ) : null}
       </div>
     </div>
   );

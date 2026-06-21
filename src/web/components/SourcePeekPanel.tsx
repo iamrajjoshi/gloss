@@ -23,6 +23,14 @@ const PANEL_MARGIN = 16;
 const PANEL_MIN_WIDTH = 360;
 const PANEL_MIN_HEIGHT = 280;
 const SOURCE_PEEK_SCROLL_LOAD_THRESHOLD = 360;
+const EMPTY_RANGE_LOADING: Record<SourcePeekRangeDirection, boolean> = {
+  above: false,
+  below: false
+};
+
+function emptyRangeLoading(): Record<SourcePeekRangeDirection, boolean> {
+  return { ...EMPTY_RANGE_LOADING };
+}
 
 export type SourcePeekPanelState =
   | { status: 'loading'; symbol: string }
@@ -55,18 +63,15 @@ export function SourcePeekPanel({
   const animationFrameRef = useRef<number | null>(null);
   const pendingRectRef = useRef<PanelRect | null>(null);
   const cleanupInteractionRef = useRef<(() => void) | null>(null);
-  const rangeLoadingRef = useRef<Record<SourcePeekRangeDirection, boolean>>({
-    above: false,
-    below: false
-  });
+  const response = state.status === 'ready' ? state.response : null;
+  const errorPresentation =
+    state.status === 'error' ? sourcePeekErrorPresentation(state.message, state.symbol) : null;
+  const rangeLoadingRef = useRef<Record<SourcePeekRangeDirection, boolean>>(EMPTY_RANGE_LOADING);
   const rangeRequestIdRef = useRef<Record<SourcePeekRangeDirection, number>>({
     above: 0,
     below: 0
   });
-  const responseRef = useRef<SourcePeekResponse | null>(null);
-  const response = state.status === 'ready' ? state.response : null;
-  const errorPresentation =
-    state.status === 'error' ? sourcePeekErrorPresentation(state.message, state.symbol) : null;
+  const responseRef = useRef<SourcePeekResponse | null>(response);
   const [highlightedSource, setHighlightedSource] = useState<{
     lines: HighlightedSourceLines | null;
     content: string;
@@ -76,13 +81,28 @@ export function SourcePeekPanel({
   const [loadedSource, setLoadedSource] = useState<LoadedSourcePeek | null>(() =>
     response ? initialLoadedSource(response) : null
   );
-  const [rangeLoading, setRangeLoading] = useState<Record<SourcePeekRangeDirection, boolean>>({
-    above: false,
-    below: false
-  });
+  const loadedResponseRef = useRef<SourcePeekResponse | null>(response);
+  const [rangeLoading, setRangeLoading] =
+    useState<Record<SourcePeekRangeDirection, boolean>>(emptyRangeLoading);
   const [rangeError, setRangeError] = useState<string | null>(null);
   const [wordWrap, setWordWrap] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  if (response !== loadedResponseRef.current) {
+    const nextRangeLoading = emptyRangeLoading();
+    loadedResponseRef.current = response;
+    responseRef.current = response;
+    rangeRequestIdRef.current = {
+      above: rangeRequestIdRef.current.above + 1,
+      below: rangeRequestIdRef.current.below + 1
+    };
+    rangeLoadingRef.current = nextRangeLoading;
+    setLoadedSource(response ? initialLoadedSource(response) : null);
+    setRangeError(null);
+    setRangeLoading(nextRangeLoading);
+    setActionMessage(null);
+  }
+
   const sourceLines = useMemo(
     () => (loadedSource ? splitSourceLines(loadedSource.content) : []),
     [loadedSource]
@@ -158,19 +178,6 @@ export function SourcePeekPanel({
     const timeout = window.setTimeout(() => setActionMessage(null), 2200);
     return () => window.clearTimeout(timeout);
   }, [actionMessage]);
-
-  useEffect(() => {
-    responseRef.current = response;
-    rangeRequestIdRef.current = {
-      above: rangeRequestIdRef.current.above + 1,
-      below: rangeRequestIdRef.current.below + 1
-    };
-    setLoadedSource(response ? initialLoadedSource(response) : null);
-    setRangeError(null);
-    rangeLoadingRef.current = { above: false, below: false };
-    setRangeLoading({ above: false, below: false });
-    setActionMessage(null);
-  }, [response]);
 
   useEffect(() => {
     if (!response || !loadedSource) {
@@ -347,23 +354,25 @@ export function SourcePeekPanel({
       const previousScrollHeight =
         direction === 'above' ? (codeRef.current?.scrollHeight ?? null) : null;
 
+      if (!isCurrentRequest()) {
+        return;
+      }
       updateRangeLoading(direction, true);
       setRangeError(null);
       try {
         const range = await onLoadRange(response.filePath, request.startLine, request.lineCount);
-        if (!isCurrentRequest()) {
-          return;
-        }
-        setLoadedSource((current) =>
-          current?.response === response ? mergeLoadedSourceRange(current, range) : current
-        );
-        if (direction === 'above' && previousScrollHeight !== null) {
-          window.requestAnimationFrame(() => {
-            const scroller = codeRef.current;
-            if (scroller) {
-              scroller.scrollTop += scroller.scrollHeight - previousScrollHeight;
-            }
-          });
+        if (isCurrentRequest()) {
+          setLoadedSource((current) =>
+            current?.response === response ? mergeLoadedSourceRange(current, range) : current
+          );
+          if (direction === 'above' && previousScrollHeight !== null) {
+            window.requestAnimationFrame(() => {
+              const scroller = codeRef.current;
+              if (scroller) {
+                scroller.scrollTop += scroller.scrollHeight - previousScrollHeight;
+              }
+            });
+          }
         }
       } catch (reason) {
         if (isCurrentRequest()) {

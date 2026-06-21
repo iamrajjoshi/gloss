@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { parseUnifiedDiff } from '../shared/diff-parser';
 import { summarizeDiffFiles } from '../shared/diff-stats';
+import { sortDiffFiles } from '../shared/file-order';
 import type {
   BaseRef,
   CommitDiff,
@@ -62,7 +63,7 @@ function buildPayload({
   fallbackReason,
   commitDiffs
 }: PayloadOptions): DiffPayload {
-  const files = parseUnifiedDiff(rawDiff);
+  const files = sortDiffFiles(parseUnifiedDiff(rawDiff));
   return {
     base,
     branch,
@@ -189,7 +190,7 @@ async function captureCommitDiffs(
   const commitDiffs: CommitDiff[] = [];
   for (const commit of commits) {
     const rawDiff = await git([...DIFF_ARGS, `${commit.sha}^`, commit.sha, '--'], repoRoot);
-    const files = parseUnifiedDiff(rawDiff);
+    const files = sortDiffFiles(parseUnifiedDiff(rawDiff));
     commitDiffs.push({
       commit,
       stats: summarizeDiffFiles(files),

@@ -1,6 +1,7 @@
 import type {
   Comment,
   FeedbackBundle,
+  LineComment,
   ResolutionBundle,
   ResolutionCounts,
   ResolvedComment,
@@ -13,7 +14,20 @@ export interface LineRange {
   endLine: number;
 }
 
+export function isLineComment(comment: Comment): comment is LineComment {
+  return comment.kind === undefined || comment.kind === 'line';
+}
+
 export function compareCommentsByLocation(a: Comment, b: Comment): number {
+  const aIsLine = isLineComment(a);
+  const bIsLine = isLineComment(b);
+  if (!aIsLine || !bIsLine) {
+    if (aIsLine !== bIsLine) {
+      return aIsLine ? 1 : -1;
+    }
+    return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+  }
+
   return (
     a.filePath.localeCompare(b.filePath) ||
     a.startLine - b.startLine ||
@@ -22,8 +36,14 @@ export function compareCommentsByLocation(a: Comment, b: Comment): number {
   );
 }
 
-export function countCommentFiles(comments: Pick<Comment, 'filePath'>[]): number {
-  return new Set(comments.map((comment) => comment.filePath)).size;
+export function countCommentFiles(comments: Comment[]): number {
+  const filePaths = new Set<string>();
+  for (const comment of comments) {
+    if (isLineComment(comment)) {
+      filePaths.add(comment.filePath);
+    }
+  }
+  return filePaths.size;
 }
 
 export function formatLineRange(

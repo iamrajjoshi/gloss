@@ -55,4 +55,17 @@ describe('useReviewStore', () => {
     expect(useReviewStore.getState().resolution).toEqual(resolution);
     expect(useReviewStore.getState().draft).toBeNull();
   });
+
+  it('adds general comments without a line draft', () => {
+    useReviewStore.getState().addGeneralComment(' Update the release notes. ');
+
+    expect(useReviewStore.getState().comments).toEqual([
+      {
+        kind: 'general',
+        id: expect.any(String),
+        body: 'Update the release notes.',
+        createdAt: expect.any(String)
+      }
+    ]);
+  });
 });

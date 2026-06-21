@@ -1,7 +1,7 @@
-import { compareCommentsByLocation, formatLineRange } from './comments';
+import { compareCommentsByLocation, formatLineRange, isLineComment } from './comments';
 import { languageForPath } from './language';
 import { reviewScopeLabel } from './review-scope';
-import type { FeedbackBundle } from './types';
+import type { FeedbackBundle, LineComment } from './types';
 
 function fenceFor(snippet: string): string {
   let fence = '```';
@@ -22,9 +22,11 @@ function languageForSnippet(filePath: string, snippet: string): string {
 
 export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
   const comments = bundle.comments.toSorted(compareCommentsByLocation);
-  const commentsByFile = new Map<string, typeof comments>();
+  const generalComments = comments.filter((comment) => !isLineComment(comment));
+  const lineComments = comments.filter(isLineComment);
+  const commentsByFile = new Map<string, LineComment[]>();
   const files: string[] = [];
-  for (const comment of comments) {
+  for (const comment of lineComments) {
     const fileComments = commentsByFile.get(comment.filePath);
     if (fileComments) {
       fileComments.push(comment);
@@ -42,6 +44,13 @@ export function serializeFeedbackMarkdown(bundle: FeedbackBundle): string {
     `Files: ${files.length}   Comments: ${comments.length}`,
     ''
   ];
+
+  if (generalComments.length > 0) {
+    lines.push('## General comments', '');
+    for (const comment of generalComments) {
+      lines.push(`### ${comment.id}`, comment.body.trim(), '');
+    }
+  }
 
   for (const filePath of files) {
     lines.push(`## ${filePath}`, '');

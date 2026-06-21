@@ -18,6 +18,7 @@ interface ReviewState {
   hydrateComments: (comments: Comment[]) => void;
   hydrateReview: (comments: Comment[], resolution?: ResolutionBundle | null) => void;
   addComment: (body: string) => void;
+  addGeneralComment: (body: string) => void;
   removeComment: (id: string) => void;
   reset: () => void;
 }
@@ -38,6 +39,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       comments: [
         ...state.comments,
         {
+          kind: 'line',
           id: ulid(),
           filePath: draft.filePath,
           side: draft.side,
@@ -49,6 +51,23 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         }
       ],
       draft: null
+    }));
+  },
+  addGeneralComment: (body) => {
+    const trimmed = body.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    set((state) => ({
+      comments: [
+        ...state.comments,
+        {
+          kind: 'general',
+          id: ulid(),
+          body: trimmed,
+          createdAt: new Date().toISOString()
+        }
+      ]
     }));
   },
   removeComment: (id) =>

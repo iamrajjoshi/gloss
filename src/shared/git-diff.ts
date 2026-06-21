@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { parseUnifiedDiff } from './diff-parser';
 import { summarizeDiffFiles } from './diff-stats';
+import { sortDiffFiles } from './file-order';
 import type { CommitDiff, DiffContextResponse, DiffLine } from './types';
 
 const DIFF_ARGS = ['diff', '--no-color', '--find-renames', '--find-copies'];
@@ -18,7 +19,7 @@ export async function captureCommitRangeDiff(
   repoRoot: string
 ): Promise<Pick<CommitDiff, 'stats' | 'rawDiff' | 'files'>> {
   const rawDiff = await git([...DIFF_ARGS, `${fromSha}^`, toSha, '--'], repoRoot);
-  const files = parseUnifiedDiff(rawDiff);
+  const files = sortDiffFiles(parseUnifiedDiff(rawDiff));
   return {
     stats: summarizeDiffFiles(files),
     rawDiff,

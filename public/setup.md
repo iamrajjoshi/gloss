@@ -4,8 +4,9 @@ You are setting yourself up to use Gloss, a local code-diff review tool for
 coding-agent loops.
 
 Gloss captures the current git diff, opens a localhost browser review UI, lets
-the user attach comments to changed lines and ranges, then writes structured
-feedback under `~/.gloss/reviews/<reviewId>/turns/<turnId>/`.
+the user attach comments to changed lines/ranges or the whole review, then
+writes structured feedback under
+`~/.gloss/reviews/<reviewId>/turns/<turnId>/`.
 
 ## Check Installation
 
@@ -55,7 +56,7 @@ The skill pairs the CLI with the browser app:
 3. Read `feedbackPath` from the JSON output.
 4. Check `feedback.reviewScope`; scoped feedback means the human submitted while
    viewing one commit or commit range, not necessarily the whole turn.
-5. Address each comment in file and line order.
+5. Address general comments first, then file comments in file and line order.
 6. Validate the fix with the narrowest relevant checks.
 7. Optionally mark individual comments handled with
    `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`.
@@ -68,6 +69,10 @@ Browser review shortcuts:
 
 - `Command+Enter` saves the active draft comment.
 - `Command+Shift+Enter` submits the review with already-saved comments.
+
+The browser hides lockfiles by default and can also hide snapshots, generated
+code, and vendored code. Those filters affect only the browser view; submitted
+feedback still refers to the full captured diff.
 
 ## Update Your Persistent Instructions
 

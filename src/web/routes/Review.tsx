@@ -18,7 +18,15 @@ import {
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import {
+  BORING_FILE_PRESET_INFO,
+  type BoringFilePreset,
+  boringFilePresetsFor,
+  filterBoringFiles,
+  parseBoringFilePresets
+} from '../../shared/boring-files';
 import { reviewResolutionCounts } from '../../shared/comments';
+import { sortDiffFiles } from '../../shared/file-order';
 import { reviewScopeLabel } from '../../shared/review-scope';
 import { reviewDisplayTitle } from '../../shared/review-title';
 import { isResolvableReviewStatus } from '../../shared/reviews';
@@ -27,6 +35,7 @@ import type {
   CommitRangeDiffResponse,
   DiffContextSource,
   DiffPayload,
+  LineComment,
   OpenFileTarget,
   OpenFileTargetInfo,
   ReviewRecord,
@@ -43,7 +52,7 @@ import {
   fetchSourcePeekRange,
   openReviewFile
 } from '../api';
-import { DiffView, type SourcePeekTrigger } from '../components/DiffView';
+import { DiffView, type HiddenDiffInfo, type SourcePeekTrigger } from '../components/DiffView';
 import { fileCardElementId } from '../components/diff-view-helpers';
 import { FileTree } from '../components/FileTree';
 import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-helpers';
@@ -78,6 +87,11 @@ const FALLBACK_OPEN_TARGETS: OpenFileTargetInfo[] = [
   { label: 'Default app', target: 'default' },
   { label: 'Open in folder', target: 'folder' }
 ];
+const DEFAULT_HIDDEN_BORING_PRESETS: BoringFilePreset[] = ['lockfiles'];
+const BORING_FILE_FILTER_STORAGE_KEY = 'gloss:hidden-boring-file-presets:v2';
+const BORING_FILE_PRESET_LABELS = new Map(
+  BORING_FILE_PRESET_INFO.map((preset) => [preset.id, preset.label])
+);
 
 interface RangeDiffState {
   diff: CommitRangeDiffResponse | null;
@@ -155,6 +169,40 @@ function ThemePreferenceControl() {
   );
 }
 
+function loadHiddenBoringPresets(): Set<BoringFilePreset> {
+  try {
+    const storedValue = window.localStorage.getItem(BORING_FILE_FILTER_STORAGE_KEY);
+    if (storedValue === null) {
+      return new Set(DEFAULT_HIDDEN_BORING_PRESETS);
+    }
+    return parseBoringFilePresets(JSON.parse(storedValue));
+  } catch {
+    return new Set(DEFAULT_HIDDEN_BORING_PRESETS);
+  }
+}
+
+function saveHiddenBoringPresets(presets: Set<BoringFilePreset>) {
+  try {
+    window.localStorage.setItem(
+      BORING_FILE_FILTER_STORAGE_KEY,
+      JSON.stringify(Array.from(presets))
+    );
+  } catch {
+    // Browser storage can be disabled; filters should still work for the session.
+  }
+}
+
+function hiddenDiffInfoFor(
+  file: DiffPayload['files'][number],
+  hiddenPresets: Set<BoringFilePreset>
+): HiddenDiffInfo {
+  const filePresets = boringFilePresetsFor(file);
+  const presetLabels = Array.from(hiddenPresets)
+    .filter((preset) => filePresets.has(preset))
+    .map((preset) => BORING_FILE_PRESET_LABELS.get(preset) ?? preset);
+  return { presetLabels };
+}
+
 function scrollToFile(filePath: string) {
   const target = document.getElementById(fileCardElementId(filePath));
   if (!target) {
@@ -166,6 +214,42 @@ function scrollToFile(filePath: string) {
     behavior: 'smooth',
     top: Math.max(targetTop, 0)
   });
+}
+
+function scrollToLineComment(comment: LineComment): boolean {
+  const fileCard = document.getElementById(fileCardElementId(comment.filePath));
+  if (!fileCard) {
+    return false;
+  }
+  const targetLine = Math.max(comment.startLine, comment.endLine);
+  const commentTarget = Array.from(fileCard.querySelectorAll<HTMLElement>('.inline-comment')).find(
+    (element) => element.dataset.commentId === comment.id
+  );
+  const lineTarget = Array.from(fileCard.querySelectorAll<HTMLElement>('.diff-row')).find(
+    (element) =>
+      element.dataset.side === comment.side && Number(element.dataset.line) === targetLine
+  );
+  const target = commentTarget ?? lineTarget;
+  if (!target) {
+    return false;
+  }
+
+  const targetRect = target.getBoundingClientRect();
+  const targetTop =
+    targetRect.top + window.scrollY - window.innerHeight / 2 + targetRect.height / 2;
+  window.scrollTo({
+    behavior: 'auto',
+    top: Math.max(targetTop, 0)
+  });
+  flashScrollTarget(target);
+  return true;
+}
+
+function flashScrollTarget(target: HTMLElement) {
+  target.classList.remove('jump-target');
+  target.getBoundingClientRect();
+  target.classList.add('jump-target');
+  window.setTimeout(() => target.classList.remove('jump-target'), 1400);
 }
 
 function ReviewContent({ reviewId }: { reviewId: string }) {
@@ -181,6 +265,10 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     searchQuery: '',
     selectedExtensionIds: null
   });
+  const [hiddenBoringPresets, setHiddenBoringPresets] = useState<Set<BoringFilePreset>>(() =>
+    loadHiddenBoringPresets()
+  );
+  const [revealedBoringFilePaths, setRevealedBoringFilePaths] = useState<Set<string>>(new Set());
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [commitView, setCommitView] = useState<CommitView>({ mode: 'all' });
   const [rangeDiffState, dispatchRangeDiff] = useReducer(rangeDiffReducer, IDLE_RANGE_DIFF_STATE);
@@ -218,10 +306,31 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     selectedTurn && effectiveCommitView.mode === 'range'
       ? (rangeDiffState.diff ?? EMPTY_DIFF)
       : null;
-  const activeDiff: Pick<DiffPayload, 'files' | 'stats'> | null = selectedTurn
+  const activeDiffSource: Pick<DiffPayload, 'files' | 'stats'> | null = selectedTurn
     ? (selectedRangeDiff ?? selectedCommitDiff ?? selectedTurn.diff)
     : null;
+  const activeDiff = useMemo(
+    () =>
+      activeDiffSource
+        ? { ...activeDiffSource, files: sortDiffFiles(activeDiffSource.files) }
+        : null,
+    [activeDiffSource]
+  );
   const reviewFiles = activeDiff?.files ?? EMPTY_DIFF_FILES;
+  const boringFilteredFiles = useMemo(
+    () => filterBoringFiles(reviewFiles, hiddenBoringPresets),
+    [hiddenBoringPresets, reviewFiles]
+  );
+  const hiddenBoringFiles = boringFilteredFiles.hidden;
+  const hiddenDiffFiles = useMemo(
+    () =>
+      new Map(
+        hiddenBoringFiles
+          .filter((file) => !revealedBoringFilePaths.has(file.path))
+          .map((file) => [file.path, hiddenDiffInfoFor(file, hiddenBoringPresets)])
+      ),
+    [hiddenBoringFiles, hiddenBoringPresets, revealedBoringFilePaths]
+  );
   const extensionBuckets = useMemo(() => buildExtensionBuckets(reviewFiles), [reviewFiles]);
   const extensionIds = useMemo(
     () => extensionBuckets.map((bucket) => bucket.id),
@@ -405,9 +514,9 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   const showTurnHistory = shouldShowTurnHistory(record.turns);
   const visibleRangeDiffError = effectiveCommitView.mode === 'range' ? rangeDiffState.error : null;
   const visibleRangeDiffLoading = effectiveCommitView.mode === 'range' && rangeDiffState.loading;
-  const viewedCount = activeDiff.files.filter((file) => viewedFiles.has(file.path)).length;
+  const viewedCount = reviewFiles.filter((file) => viewedFiles.has(file.path)).length;
   const viewedProgress =
-    activeDiff.files.length === 0 ? 0 : Math.round((viewedCount / activeDiff.files.length) * 100);
+    reviewFiles.length === 0 ? 0 : Math.round((viewedCount / reviewFiles.length) * 100);
   const updateSearchQuery = (searchQuery: string) => {
     setFilterState((current) => ({
       reviewId: record.meta.id,
@@ -445,6 +554,54 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
       searchQuery: current.reviewId === record.meta.id ? current.searchQuery : '',
       selectedExtensionIds: new Set()
     }));
+  };
+  const toggleBoringPreset = (preset: BoringFilePreset) => {
+    setHiddenBoringPresets((current) => {
+      const next = new Set(current);
+      next.has(preset) ? next.delete(preset) : next.add(preset);
+      saveHiddenBoringPresets(next);
+      return next;
+    });
+  };
+  const showAllBoringFiles = () => {
+    const next = new Set<BoringFilePreset>();
+    saveHiddenBoringPresets(next);
+    setHiddenBoringPresets(next);
+  };
+  const revealHiddenBoringFile = (filePath: string) => {
+    setRevealedBoringFilePaths((current) => {
+      const next = new Set(current);
+      next.add(filePath);
+      return next;
+    });
+  };
+  const jumpToLineComment = (comment: LineComment) => {
+    setActiveFilePath(comment.filePath);
+    setFileTreeDrawerOpen(false);
+    if (!filteredFiles.some((file) => file.path === comment.filePath)) {
+      setFilterState({
+        reviewId: record.meta.id,
+        searchQuery: '',
+        selectedExtensionIds: null
+      });
+    }
+    if (hiddenDiffFiles.has(comment.filePath)) {
+      revealHiddenBoringFile(comment.filePath);
+    }
+
+    let attempts = 0;
+    const tryScroll = () => {
+      if (scrollToLineComment(comment)) {
+        return;
+      }
+      if (attempts < 8) {
+        attempts += 1;
+        window.requestAnimationFrame(tryScroll);
+        return;
+      }
+      scrollToFile(comment.filePath);
+    };
+    window.requestAnimationFrame(tryScroll);
   };
   const selectFile = (filePath: string) => {
     setActiveFilePath(filePath);
@@ -566,14 +723,18 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   const fileTreeProps = {
     activeFilePath: visibleActiveFilePath,
     extensionBuckets,
-    files: activeDiff.files,
+    files: reviewFiles,
     filteredFiles,
+    hiddenBoringFileCount: hiddenDiffFiles.size,
+    hiddenBoringPresets,
     searchQuery,
     selectedExtensionIds,
     onClearExtensions: clearExtensions,
     onFileSelect: selectFile,
     onSearchChange: updateSearchQuery,
     onSelectAllExtensions: selectAllExtensions,
+    onShowAllBoringFiles: showAllBoringFiles,
+    onToggleBoringPreset: toggleBoringPreset,
     onToggleExtension: toggleExtension
   };
   const sidebarFileTree = (
@@ -625,7 +786,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                     className="viewed-progress-ring"
                     style={{ '--viewed-progress': `${viewedProgress}%` } as CSSProperties}
                   />
-                  {viewedCount} / {activeDiff.files.length} viewed
+                  {viewedCount} / {reviewFiles.length} viewed
                 </div>
                 <button
                   aria-label="Open file tree"
@@ -711,6 +872,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                 diff={activeDiff}
                 emptyState={filteredEmptyState}
                 files={filteredFiles}
+                hiddenFiles={hiddenDiffFiles}
                 record={displayRecord}
                 readOnly={readOnly}
                 reviewId={reviewId}
@@ -721,6 +883,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                 openTargets={openTargets}
                 onCopyFileContents={handleCopyFileContents}
                 onOpenFile={handleOpenFile}
+                onRevealHiddenFile={revealHiddenBoringFile}
                 onSourcePeek={handleSourcePeek}
                 onViewedChange={handleViewedChange}
               />
@@ -748,6 +911,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
             <SubmitBar
               reviewId={reviewId}
               reviewScope={submitReviewScope}
+              onLineCommentSelect={jumpToLineComment}
               onSubmitted={reloadReview}
             />
           )}

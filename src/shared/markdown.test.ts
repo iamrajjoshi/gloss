@@ -107,4 +107,37 @@ describe('serializeFeedbackMarkdown', () => {
       'Review scope: Commit range 1234567 to abcdef1'
     );
   });
+
+  it('renders general comments before file-specific comments', () => {
+    const bundle: FeedbackBundle = {
+      version: 1,
+      reviewId: '01HFXJ3K7Z6E2BQYR4M0V8N5DH',
+      timestamp: '2026-05-21T14:32:11Z',
+      base: { ref: 'HEAD', sha: 'a3f8b21ffffff' },
+      branch: 'raj--gloss--test',
+      comments: [
+        {
+          id: 'line-comment',
+          filePath: 'src/web/styles.css',
+          startLine: 10,
+          endLine: 10,
+          side: 'R',
+          body: 'tighten this selector',
+          originalSnippet: '.button {}',
+          createdAt: '2026-05-21T14:32:12Z'
+        },
+        {
+          kind: 'general',
+          id: 'general-comment',
+          body: 'Please also update the install docs.',
+          createdAt: '2026-05-21T14:32:10Z'
+        }
+      ]
+    };
+
+    const markdown = serializeFeedbackMarkdown(bundle);
+
+    expect(markdown.indexOf('## General comments')).toBeLessThan(markdown.indexOf('## src/web'));
+    expect(markdown).toContain('Please also update the install docs.');
+  });
 });

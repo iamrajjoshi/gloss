@@ -69,6 +69,17 @@ describe('captureDiff', () => {
     expect(diff.stats).toMatchObject({ files: 3, additions: 3, deletions: 1 });
   });
 
+  it('sorts working and untracked files by full path', async () => {
+    const repo = await seedRepo();
+    await write(repo, 'zeta.ts', 'export const zeta = true;\n');
+    await git(['add', 'zeta.ts'], repo);
+    await write(repo, 'aaa.ts', 'export const aaa = true;\n');
+
+    const diff = await captureDiff(undefined, repo);
+
+    expect(diff.files.map((file) => file.path)).toEqual(['aaa.ts', 'zeta.ts']);
+  });
+
   it('falls back to the branch diff when the working tree is clean', async () => {
     const repo = await seedRepo();
     const mainSha = await git(['rev-parse', 'main'], repo);

@@ -28,8 +28,9 @@ feedback bundle. Check `feedback.reviewScope` before editing: missing or
 `{ "mode": "all" }` means the whole turn was submitted; `{ "mode": "single" }`
 or `{ "mode": "range" }` means the human submitted feedback while viewing only
 that commit preview. Treat scoped feedback as comments on that slice, and do not
-infer that unreviewed commits were approved. Address every comment in file/line
-order, then run the narrowest relevant validation. After validation, run
+infer that unreviewed commits were approved. Address general comments first,
+then file/line comments in file and line order, then run the narrowest relevant
+validation. After validation, run
 `gloss resolve <reviewId> --summary "<what changed>"`.
 When tracking progress comment-by-comment is useful, run
 `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`
