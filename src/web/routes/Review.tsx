@@ -7,6 +7,7 @@ import {
   GitBranch,
   GitCommitHorizontal,
   LoaderCircle,
+  MessageSquare,
   Monitor,
   Moon,
   MoveHorizontal,
@@ -63,6 +64,7 @@ import { type ThemePreference, useTheme } from '../theme';
 import { loadViewedFiles, saveViewedFiles } from '../viewed-files';
 import { shouldReloadReviewForEvent } from './review-events';
 import { type FileFilterState, selectedExtensionIdsForFilterState } from './review-filter';
+import { submittedGeneralFeedbackItems } from './review-general-feedback';
 import {
   branchPillForTitle,
   reviewTitlePresentation,
@@ -514,6 +516,10 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   const showTurnHistory = shouldShowTurnHistory(record.turns);
   const visibleRangeDiffError = effectiveCommitView.mode === 'range' ? rangeDiffState.error : null;
   const visibleRangeDiffLoading = effectiveCommitView.mode === 'range' && rangeDiffState.loading;
+  const generalFeedbackItems = submittedGeneralFeedbackItems(
+    displayRecord.feedback,
+    displayRecord.resolution
+  );
   const viewedCount = reviewFiles.filter((file) => viewedFiles.has(file.path)).length;
   const viewedProgress =
     reviewFiles.length === 0 ? 0 : Math.round((viewedCount / reviewFiles.length) * 100);
@@ -866,6 +872,9 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
             </aside>
             <section className="review-diff-column">
               {readOnly && !showTurnHistory ? <ReviewStateBanner record={displayRecord} /> : null}
+              {readOnly && generalFeedbackItems.length > 0 ? (
+                <SubmittedGeneralFeedback items={generalFeedbackItems} />
+              ) : null}
               <DiffView
                 activeFilePath={visibleActiveFilePath}
                 contextSource={contextSource}
@@ -1533,6 +1542,49 @@ function formatRelativeTime(timestamp: string): string {
     RELATIVE_TIME_UNITS.find(([, unitSeconds]) => Math.abs(diffSeconds) >= unitSeconds) ??
     RELATIVE_TIME_UNITS[RELATIVE_TIME_UNITS.length - 1];
   return RELATIVE_TIME_FORMAT.format(Math.round(diffSeconds / secondsPerUnit), unit);
+}
+
+function SubmittedGeneralFeedback({
+  items
+}: {
+  items: ReturnType<typeof submittedGeneralFeedbackItems>;
+}) {
+  return (
+    <section className="submitted-general-feedback" aria-labelledby="submitted-general-title">
+      <header className="submitted-general-feedback-header">
+        <div className="submitted-general-feedback-title">
+          <MessageSquare size={16} />
+          <h2 id="submitted-general-title">General feedback</h2>
+        </div>
+        <span className="submitted-general-feedback-count">{items.length}</span>
+      </header>
+      <div className="submitted-general-feedback-list">
+        {items.map((item) => (
+          <article
+            className={`submitted-general-feedback-card ${item.status}`}
+            key={item.comment.id}
+          >
+            <div className="submitted-general-feedback-icon">
+              {item.status === 'resolved' ? (
+                <CheckCircle2 size={15} />
+              ) : (
+                <MessageSquare size={15} />
+              )}
+            </div>
+            <div className="submitted-general-feedback-content">
+              <div className="submitted-general-feedback-meta">
+                {item.status === 'resolved' ? 'Resolved' : 'Open · Needs fix'}
+              </div>
+              <p className="submitted-general-feedback-body">{item.comment.body}</p>
+              {item.summary ? (
+                <p className="submitted-general-feedback-summary">{item.summary}</p>
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ReviewStateBanner({ record }: { record: ReviewRecord }) {
