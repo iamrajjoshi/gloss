@@ -1655,6 +1655,7 @@ pre {
   background: var(--floating-surface);
   box-shadow: 0 24px 80px var(--floating-shadow-strong);
   color: var(--ide-fg);
+  overscroll-behavior: contain;
   will-change: transform;
 }
 
@@ -1975,6 +1976,7 @@ pre {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
+  overscroll-behavior: contain;
   background: var(--ide-bg);
 }
 

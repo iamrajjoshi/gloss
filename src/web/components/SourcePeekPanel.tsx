@@ -180,6 +180,38 @@ export function SourcePeekPanel({
   }, [actionMessage]);
 
   useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) {
+      return;
+    }
+
+    const handlePanelWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node) || !panel.contains(target)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const scroller = codeRef.current;
+      if (!scroller) {
+        return;
+      }
+
+      const delta = wheelDeltaInPixels(event, scroller);
+      scroller.scrollTop += delta.y;
+      scroller.scrollLeft += delta.x;
+    };
+
+    panel.addEventListener('wheel', handlePanelWheel, { passive: false });
+    return () => panel.removeEventListener('wheel', handlePanelWheel);
+  }, []);
+
+  useEffect(() => {
     if (!response || !loadedSource) {
       return;
     }
@@ -692,6 +724,29 @@ function sourcePeekViewportMargin(): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function wheelDeltaInPixels(event: WheelEvent, scroller: HTMLElement): { x: number; y: number } {
+  const scale = wheelDeltaScale(event, scroller);
+  return {
+    x: event.deltaX * scale,
+    y: event.deltaY * scale
+  };
+}
+
+function wheelDeltaScale(event: WheelEvent, scroller: HTMLElement): number {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return sourcePeekLineHeight(scroller);
+  }
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return scroller.clientHeight || window.innerHeight;
+  }
+  return 1;
+}
+
+function sourcePeekLineHeight(scroller: HTMLElement): number {
+  const lineHeight = Number.parseFloat(window.getComputedStyle(scroller).lineHeight);
+  return Number.isFinite(lineHeight) ? lineHeight : 24;
 }
 
 function renderSourceLine(line: string, tokens: SyntaxToken[] | null) {
