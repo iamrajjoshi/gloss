@@ -309,7 +309,11 @@ function DiffFileTable({
   const { resolvedTheme } = useTheme();
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
-  const [highlightedLines, setHighlightedLines] = useState<HighlightedDiffLines | null>(null);
+  const [highlightedFile, setHighlightedFile] = useState<{
+    file: DiffFile;
+    lines: HighlightedDiffLines | null;
+    theme: typeof resolvedTheme;
+  } | null>(null);
   const [contextByGap, setContextByGap] = useState<DiffContextStateByGap>({});
   const selectionRef = useRef<SelectionRef | null>(null);
   const cleanupSelectionListeners = useRef<(() => void) | null>(null);
@@ -322,6 +326,10 @@ function DiffFileTable({
     () => fileWithExpandedContext(file, contextByGap),
     [contextByGap, file]
   );
+  const highlightedLines =
+    highlightedFile?.file === expandedFile && highlightedFile.theme === resolvedTheme
+      ? highlightedFile.lines
+      : null;
   const visibleLines = useMemo(() => visibleDiffLines(file, contextByGap), [contextByGap, file]);
   const visualIndexByLine = useMemo(() => buildVisualIndex(visibleLines), [visibleLines]);
   const resolvedByCommentId = useMemo(
@@ -508,12 +516,20 @@ function DiffFileTable({
       .then(({ highlightDiffFile }) => highlightDiffFile(expandedFile, resolvedTheme))
       .then((nextHighlightedLines) => {
         if (!cancelled) {
-          setHighlightedLines(nextHighlightedLines);
+          setHighlightedFile({
+            file: expandedFile,
+            lines: nextHighlightedLines,
+            theme: resolvedTheme
+          });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setHighlightedLines(null);
+          setHighlightedFile({
+            file: expandedFile,
+            lines: null,
+            theme: resolvedTheme
+          });
         }
       });
 
