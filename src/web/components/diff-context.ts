@@ -59,6 +59,20 @@ export function contextExpansionDirectionForSegment(
   return gap.beforeHunkIndex === 0 ? 'up' : 'all';
 }
 
+export function contextExpansionDirectionsForSegment(
+  gap: DiffContextGap,
+  segment: Extract<DiffContextSegment, { type: 'hidden' }>
+): ContextExpansionDirection[] {
+  if (segment.lineCount <= CONTEXT_EXPAND_CHUNK_SIZE) {
+    return [contextExpansionDirectionForSegment(gap, segment)];
+  }
+
+  const startOffset = segment.oldStart - gap.oldStart;
+  const canExpandFromTopEdge = startOffset > 0 || gap.beforeHunkIndex > 0;
+
+  return canExpandFromTopEdge ? ['up', 'down'] : ['up'];
+}
+
 export function buildContextGaps(file: DiffFile): DiffContextGap[] {
   const gaps: DiffContextGap[] = [];
   let previousOldEnd = 0;

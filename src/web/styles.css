@@ -2232,7 +2232,8 @@ pre {
 
 .hidden-lines-action {
   display: inline-flex;
-  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
   height: 28px;
   align-items: center;
   justify-content: center;
@@ -2242,6 +2243,10 @@ pre {
   background: transparent;
   color: var(--on-ide-accent);
   cursor: pointer;
+}
+
+.hidden-lines-action + .hidden-lines-action {
+  border-left: 1px solid color-mix(in srgb, var(--on-ide-accent) 24%, transparent);
 }
 
 .hidden-lines-action:hover,
