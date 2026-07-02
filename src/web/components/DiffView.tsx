@@ -30,7 +30,7 @@ import { CommentComposer } from './CommentPopover';
 import {
   buildContextGaps,
   type ContextExpansionDirection,
-  contextExpansionDirectionForSegment,
+  contextExpansionDirectionsForSegment,
   contextExpansionRequest,
   type DiffContextGap,
   type DiffContextSegment,
@@ -654,7 +654,7 @@ function DiffFileTable({
       return (
         <HiddenLinesControl
           canExpand={Boolean(reviewId && contextSource)}
-          direction={contextExpansionDirectionForSegment(gap, segment)}
+          directions={contextExpansionDirectionsForSegment(gap, segment)}
           error={contextByGap[gap.id]?.error ?? null}
           key={`hidden:${gap.id}:${segment.oldStart}:${segment.newStart}:${segment.lineCount}`}
           loading={contextByGap[gap.id]?.loading ?? false}
@@ -694,21 +694,20 @@ function DiffFileTable({
 
 function HiddenLinesControl({
   canExpand,
-  direction,
+  directions,
   error,
   loading,
   segment,
   onExpand
 }: {
   canExpand: boolean;
-  direction: ContextExpansionDirection;
+  directions: ContextExpansionDirection[];
   error: string | null;
   loading: boolean;
   segment: Extract<DiffContextSegment, { type: 'hidden' }>;
   onExpand: (direction: ContextExpansionDirection) => void;
 }) {
   const disabled = !canExpand || Boolean(loading);
-  const label = hiddenContextLabel(direction);
   return (
     <div className="hidden-lines">
       <div className="hidden-lines-main">
@@ -723,16 +722,22 @@ function HiddenLinesControl({
           )}
         </span>
         <div className="hidden-lines-actions">
-          <button
-            aria-label={label}
-            className="hidden-lines-action"
-            disabled={disabled}
-            title={label}
-            type="button"
-            onClick={() => onExpand(direction)}
-          >
-            <HiddenContextIcon direction={direction} />
-          </button>
+          {directions.map((direction) => {
+            const label = hiddenContextLabel(direction);
+            return (
+              <button
+                aria-label={label}
+                className="hidden-lines-action"
+                disabled={disabled}
+                key={direction}
+                title={label}
+                type="button"
+                onClick={() => onExpand(direction)}
+              >
+                <HiddenContextIcon direction={direction} />
+              </button>
+            );
+          })}
         </div>
       </div>
       {error ? <div className="hidden-lines-error">{error}</div> : null}

@@ -3,6 +3,7 @@ import { DIFF_CONTEXT_MAX_LINES, type DiffFile, type DiffLine } from '../../shar
 import {
   buildContextGaps,
   contextExpansionDirectionForSegment,
+  contextExpansionDirectionsForSegment,
   contextExpansionRequest,
   contextLinesForGap,
   expandedContextSegments,
@@ -95,6 +96,54 @@ describe('diff context helpers', () => {
       throw new Error('Expected hidden segment between revealed context');
     }
     expect(contextExpansionDirectionForSegment(gap, middleSegment)).toBe('all');
+  });
+
+  it('keeps both edge expansion actions available between hunks', () => {
+    const firstHunk = file.hunks[0];
+    if (!firstHunk) {
+      throw new Error('Expected first hunk');
+    }
+
+    const largeInterHunkFile: DiffFile = {
+      ...file,
+      hunks: [
+        firstHunk,
+        {
+          oldStart: 80,
+          oldLines: 2,
+          newStart: 80,
+          newLines: 2,
+          header: '',
+          lines: [
+            { type: 'delete', oldLine: 80, newLine: null, content: 'line 80 old' },
+            { type: 'context', oldLine: 81, newLine: 81, content: 'line 81' }
+          ]
+        }
+      ]
+    };
+    const gap = buildContextGaps(largeInterHunkFile)[1];
+    const fullMiddleSegment = expandedContextSegments(gap, undefined)[0];
+    if (fullMiddleSegment?.type !== 'hidden') {
+      throw new Error('Expected hidden segment');
+    }
+
+    expect(contextExpansionDirectionsForSegment(gap, fullMiddleSegment)).toEqual(['up', 'down']);
+
+    const withTop = mergeContextLines(gap, undefined, contextLines(5, 3));
+    const bottomSegment = expandedContextSegments(gap, withTop)[1];
+    if (bottomSegment?.type !== 'hidden') {
+      throw new Error('Expected hidden segment below revealed context');
+    }
+
+    expect(contextExpansionDirectionsForSegment(gap, bottomSegment)).toEqual(['up', 'down']);
+
+    const topGap = buildContextGaps(file)[0];
+    const fullTopSegment = expandedContextSegments(topGap, undefined)[0];
+    if (fullTopSegment?.type !== 'hidden') {
+      throw new Error('Expected top hidden segment');
+    }
+
+    expect(contextExpansionDirectionsForSegment(topGap, fullTopSegment)).toEqual(['up']);
   });
 
   it('builds directional requests from the remaining hidden window', () => {
