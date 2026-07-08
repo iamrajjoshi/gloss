@@ -10,10 +10,12 @@ description: Open local working-tree or branch changes in Gloss for browser revi
 1. From the repo root, run `gloss open --json` unless the user names a base ref.
 2. Leave it running; it waits until browser submission. Use `--no-watch` only when the user only wants the review opened.
 3. Parse the JSON output and read `feedbackPath`.
-4. Apply general comments first, then file/line comments in file and line order unless "Discussion Mode" applies.
-5. Validate with the narrowest relevant checks.
-6. Resolve handled feedback with `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"` when useful, then `gloss resolve <reviewId> --summary "<what changed>"`.
-7. For another pass on the same work, run `gloss open --review <reviewId> --json`; use a fresh `gloss open --json` only for unrelated work.
+4. Claim submitted feedback with `gloss claim <reviewId> --json` so the browser shows agent work has started.
+5. Apply general comments first, then file/line comments in file and line order unless "Discussion Mode" applies.
+6. Post useful visible progress with `gloss note <reviewId> --status working --message "<short status>"`.
+7. Validate with the narrowest relevant checks.
+8. Resolve handled feedback with `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"` when useful, then `gloss resolve <reviewId> --summary "<what changed>"`.
+9. For another pass on the same work, run `gloss open --review <reviewId> --json`; use a fresh `gloss open --json` only for unrelated work.
 
 ## Discussion Mode
 
@@ -51,6 +53,7 @@ inspect durable state under `${GLOSS_STATE_DIR:-$HOME/.gloss}`:
 
 - `server.json`: daemon pid, port, version, and state dir.
 - `reviews/<reviewId>/meta.json`: review status, cwd, active turn, and turn summaries.
+- `reviews/<reviewId>/events.jsonl`: durable review, submit, agent, and resolution timeline.
 - `reviews/<reviewId>/turns/<turnId>/`: `turn.json`, `diff.json`, `feedback.json`, `feedback.md`, `resolved.json`.
 
 Use this pattern to discover review files:

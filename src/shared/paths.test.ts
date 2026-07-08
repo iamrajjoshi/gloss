@@ -3,6 +3,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   expandHome,
+  globalLastPortFile,
   globalLogDir,
   globalReviewDiffFile,
   globalReviewDir,
@@ -34,6 +35,7 @@ describe('global Gloss paths', () => {
     const root = path.join(homedir(), '.gloss');
     expect(globalStateDir()).toBe(root);
     expect(globalServerFile()).toBe(path.join(root, 'server.json'));
+    expect(globalLastPortFile()).toBe(path.join(root, 'last-port'));
     expect(globalServerLockDir()).toBe(path.join(root, 'server.lock'));
     expect(globalLogDir()).toBe(path.join(root, 'logs'));
     expect(globalServerLogFile()).toBe(path.join(root, 'logs', 'server.log'));

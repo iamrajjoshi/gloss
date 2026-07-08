@@ -8,11 +8,13 @@ import { promisify } from 'node:util';
 import getPort from 'get-port';
 import {
   ensureDir,
+  globalLastPortFile,
   globalLogDir,
   globalServerLockDir,
   globalServerLogFile,
   globalStateDir,
-  packageVersion
+  packageVersion,
+  protocolVersion
 } from '../shared/paths';
 import { readServerInfo, removeServerInfoFile, writeServerInfo } from '../shared/server-info';
 import type { ServerInfo } from '../shared/types';
@@ -51,7 +53,18 @@ export async function isServerResponsive(info: ServerInfo): Promise<boolean> {
   }
   try {
     const health = await new ServerClient(serverUrl(info)).health();
-    return health.ok === true && health.version === packageVersion;
+    if (
+      health.ok !== true ||
+      health.version !== packageVersion ||
+      health.protocolVersion !== protocolVersion ||
+      health.stateDir !== info.stateDir
+    ) {
+      return false;
+    }
+    if (info.daemonPath && health.daemonPath !== info.daemonPath) {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -87,14 +100,17 @@ async function startServerUnlocked(
     await retireServer(existing);
   }
 
-  const preferredPort = options.port ?? existing?.port ?? (await getPort());
+  const rememberedPort = options.port ?? existing?.port ?? (await readLastServerPort());
+  const preferredPort = rememberedPort ?? (await getPort());
   try {
     return await launchServer(preferredPort);
   } catch (error) {
-    if (options.port || !existing?.port) {
+    if (options.port) {
       throw error;
     }
-    await removeServerInfoForPid(existing.pid);
+    if (existing) {
+      await removeServerInfoForPid(existing.pid);
+    }
     return launchServer(await getPort());
   }
 }
@@ -124,6 +140,7 @@ async function launchServer(port: number): Promise<ServerInfo> {
     pid: child.pid ?? -1,
     port,
     version: packageVersion,
+    protocolVersion,
     startedAt: new Date().toISOString(),
     stateDir: globalStateDir(),
     cwd: process.cwd(),
@@ -139,6 +156,7 @@ async function launchServer(port: number): Promise<ServerInfo> {
   const deadline = Date.now() + 8000;
   while (Date.now() < deadline) {
     if (await isServerResponsive(info)) {
+      await writeLastServerPort(port).catch(() => undefined);
       return info;
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -147,6 +165,22 @@ async function launchServer(port: number): Promise<ServerInfo> {
   await terminatePid(info.pid);
   await removeServerInfoForPid(info.pid);
   throw new Error(`Server did not become responsive. See ${globalServerLogFile()}`);
+}
+
+async function readLastServerPort(): Promise<number | null> {
+  let raw: string;
+  try {
+    raw = await readFile(globalLastPortFile(), 'utf8');
+  } catch {
+    return null;
+  }
+  const port = Number(raw.trim());
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+async function writeLastServerPort(port: number): Promise<void> {
+  await ensureDir(globalStateDir());
+  await writeFile(globalLastPortFile(), `${port}\n`);
 }
 
 async function withServerLock<T>(fn: () => Promise<T>): Promise<T> {

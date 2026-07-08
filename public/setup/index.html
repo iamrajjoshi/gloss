@@ -253,11 +253,14 @@
         <pre>1. Run gloss open --json from the repo root unless the user names a base ref.
 2. Wait for the browser review to be submitted.
 3. Read feedbackPath from the JSON output.
-4. Address general comments first, then file comments in file and line order.
-5. Validate the fix with the narrowest relevant checks.
-6. Optionally mark individual comments handled:
+4. Run gloss claim &lt;reviewId&gt; --json so the browser shows agent work started.
+5. Address general comments first, then file comments in file and line order.
+6. Optionally post progress:
+   gloss note &lt;reviewId&gt; --status working --message "&lt;short status&gt;"
+7. Validate the fix with the narrowest relevant checks.
+8. Optionally mark individual comments handled:
    gloss resolve &lt;reviewId&gt; --comment &lt;commentId&gt; --summary "&lt;what changed&gt;"
-7. Run gloss resolve &lt;reviewId&gt; --summary "&lt;what changed&gt;", then summarize what changed.</pre>
+9. Run gloss resolve &lt;reviewId&gt; --summary "&lt;what changed&gt;", then summarize what changed.</pre>
         <p>
           Browser review shortcuts:
         </p>

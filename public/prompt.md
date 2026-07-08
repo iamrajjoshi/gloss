@@ -30,7 +30,10 @@ or `{ "mode": "range" }` means the human submitted feedback while viewing only
 that commit preview. Treat scoped feedback as comments on that slice, and do not
 infer that unreviewed commits were approved. Address general comments first,
 then file/line comments in file and line order, then run the narrowest relevant
-validation. After validation, run
+validation. Before editing, run `gloss claim <reviewId> --json` so the browser
+shows that agent work has started. When useful, post progress with
+`gloss note <reviewId> --status working --message "<short status>"`.
+After validation, run
 `gloss resolve <reviewId> --summary "<what changed>"`.
 When tracking progress comment-by-comment is useful, run
 `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`
@@ -54,11 +57,13 @@ Gloss feedback is stored under:
 ~/.gloss/reviews/<reviewId>/turns/<turnId>/feedback.json
 ~/.gloss/reviews/<reviewId>/turns/<turnId>/feedback.md
 ~/.gloss/reviews/<reviewId>/turns/<turnId>/resolved.json
+~/.gloss/reviews/<reviewId>/events.jsonl
 ```
 
 Use `feedback.json` for structured agent work. Use `feedback.md` when a human
 readable summary is useful. Use `resolved.json` as Gloss's mutable resolution
-progress file; do not edit `feedback.json`.
+progress file; do not edit `feedback.json`. `events.jsonl` is the durable live
+review timeline.
 
 Gloss is for code diffs. Do not use it for Markdown plan annotation; use
 Roughdraft for Markdown review if the user has Roughdraft installed.
@@ -67,6 +72,8 @@ Useful commands:
 
 ```bash
 gloss status --json
+gloss claim <reviewId> --json
+gloss note <reviewId> --status working --message "Applying feedback"
 gloss watch <reviewId> --json
 gloss open --review <reviewId> --json
 gloss resolve <reviewId> --comment <commentId> --summary "Applied one comment"

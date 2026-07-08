@@ -17,8 +17,10 @@ import {
   packageVersion
 } from '../shared/paths';
 import { writeServerInfo } from '../shared/server-info';
-import type { ReviewMeta, ReviewStatus } from '../shared/types';
+import type { ReviewMeta, ReviewRecord, ReviewStatus } from '../shared/types';
 import {
+  isAgentClaimResponse,
+  isAgentNoteResponse,
   isClearReviewsResult,
   isCreateReviewResponse,
   isListReviewsResponse,
@@ -40,6 +42,7 @@ let tempDirs: string[] = [];
 let repoRoot = '';
 let server: ReturnType<typeof serve> | null = null;
 type TestServer = ReturnType<typeof serve>;
+type TestApp = ReturnType<typeof import('../server/index')['createApp']>;
 
 beforeEach(async () => {
   const stateDir = await mkdtemp(path.join(tmpdir(), 'gloss-cli-state-'));
@@ -71,7 +74,7 @@ async function responseJson<T>(response: Response, guard: JsonGuard<T>, label: s
 }
 
 async function startServerFixture(): Promise<{
-  app: Awaited<ReturnType<typeof import('../server/index')['createApp']>>;
+  app: TestApp;
 }> {
   const port = await getPort();
   const { createApp } = await import('../server/index');
@@ -85,6 +88,27 @@ async function startServerFixture(): Promise<{
     stateDir: globalStateDir()
   });
   return { app };
+}
+
+async function waitForReviewTurnCount(
+  app: TestApp,
+  reviewId: string,
+  turnCount: number
+): Promise<ReviewRecord> {
+  let last: ReviewRecord | null = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await app.request(`/api/reviews/${reviewId}`);
+    last = await responseJson(response, isReviewRecord, 'review response');
+    if (last.turns.length >= turnCount) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Timed out waiting for review ${reviewId} to have ${turnCount} turns; last count ${
+      last?.turns.length ?? 0
+    }`
+  );
 }
 
 async function closeServerFixture(): Promise<void> {
@@ -407,6 +431,62 @@ describe('gloss clear', () => {
   });
 });
 
+describe('gloss agent bridge', () => {
+  it('claims submitted feedback and posts agent notes', async () => {
+    const { app } = await startServerFixture();
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeDiff(repoRoot))
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1' })] })
+    });
+
+    const claim = parseJson(
+      (await runCliInRepo(['claim', created.meta.id, '--json'])).stdout,
+      isAgentClaimResponse,
+      'claim command output'
+    );
+    const note = parseJson(
+      (
+        await runCliInRepo([
+          'note',
+          created.meta.id,
+          '--status',
+          'working',
+          '--message',
+          'Applying feedback.',
+          '--json'
+        ])
+      ).stdout,
+      isAgentNoteResponse,
+      'note command output'
+    );
+
+    expect(claim).toMatchObject({
+      ok: true,
+      reviewId: created.meta.id,
+      turnId: created.turn?.id,
+      status: 'claimed',
+      feedback: { comments: [{ id: 'comment-1' }] }
+    });
+    expect(note).toMatchObject({
+      ok: true,
+      reviewId: created.meta.id,
+      status: 'working',
+      message: 'Applying feedback.'
+    });
+  });
+});
+
 describe('gloss open', () => {
   it('leaves the review pending when watch times out', async () => {
     await initializeGitRepoWithChange();
@@ -518,6 +598,64 @@ describe('gloss open', () => {
     ]);
     expect(submitted.meta.turns?.map((turn) => turn.comments.total)).toEqual([1, 1]);
   });
+
+  it('waits for the new turn submission when previous submitted events replay', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const first = parseJson(
+      (await runCliInRepo(['open', '--base', 'HEAD', '--no-open', '--no-watch', '--json'])).stdout,
+      isOpenResult,
+      'first open output'
+    );
+    const firstSubmitResponse = await app.request(`/api/reviews/${first.reviewId}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1', filePath: 'api.ts' })] })
+    });
+    await responseJson(firstSubmitResponse, isOpenResult, 'first submit response');
+    await writeFile(path.join(repoRoot, 'api.ts'), 'export const api = "followup";\n');
+
+    const secondOpen = runCliInRepo(
+      ['open', '--review', first.reviewId, '--no-open', '--timeout', '5', '--json'],
+      { reject: false }
+    );
+    let opened = await waitForReviewTurnCount(app, first.reviewId, 2);
+    const secondTurnId = opened.meta.activeTurnId;
+    if (!secondTurnId) {
+      throw new Error('second turn did not become active');
+    }
+
+    const secondSubmitResponse = await app.request(`/api/reviews/${first.reviewId}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        comments: [
+          makeComment({
+            id: 'comment-2',
+            filePath: 'api.ts',
+            body: 'Follow-up feedback.',
+            originalSnippet: 'export const api = "followup";'
+          })
+        ]
+      })
+    });
+    await responseJson(secondSubmitResponse, isOpenResult, 'second submit response');
+
+    const second = await secondOpen;
+    expect(second.exitCode).toBe(0);
+    const output = parseJson(second.stdout, isOpenResult, 'second watched open output');
+    opened = await waitForReviewTurnCount(app, first.reviewId, 2);
+
+    expect(secondTurnId).not.toBe(first.turnId);
+    expect(output.turnId).toBe(secondTurnId);
+    expect(output.turnIndex).toBe(2);
+    expect(output.comments).toBe(1);
+    expect(opened.turns.map((turn) => turn.feedback?.comments[0]?.id)).toEqual([
+      'comment-1',
+      'comment-2'
+    ]);
+  }, 10_000);
 });
 
 describe('gloss watch', () => {

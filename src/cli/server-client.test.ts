@@ -31,6 +31,42 @@ describe('ServerClient.watchReview', () => {
       counts: { files: 1, comments: 2 }
     });
   });
+
+  it('ignores replayed submissions for other turns when a turn id is supplied', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        eventStream(
+          {
+            type: 'review.submitted',
+            reviewId: 'review-1',
+            turnId: 'turn-1',
+            turnIndex: 1,
+            counts: { files: 1, comments: 1 }
+          },
+          {
+            type: 'review.submitted',
+            reviewId: 'review-1',
+            turnId: 'turn-2',
+            turnIndex: 2,
+            counts: { files: 2, comments: 3 }
+          }
+        )
+      )
+    );
+
+    const event = await new ServerClient('http://localhost:4321').watchReview('review-1', {
+      turnId: 'turn-2'
+    });
+
+    expect(event).toEqual({
+      type: 'review.submitted',
+      reviewId: 'review-1',
+      turnId: 'turn-2',
+      turnIndex: 2,
+      counts: { files: 2, comments: 3 }
+    });
+  });
 });
 
 function eventStream(...chunks: Array<string | { close: true } | ReviewEvent>): Response {

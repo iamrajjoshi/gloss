@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ReviewEvent } from '../../shared/types';
+import { mergeReviewEvents } from './Review';
 import { shouldReloadReviewForEvent } from './review-events';
 import { type FileFilterState, selectedExtensionIdsForFilterState } from './review-filter';
 import {
@@ -67,6 +68,41 @@ describe('shouldReloadReviewForEvent', () => {
 
   it('does not reload for the initial opened event', () => {
     expect(shouldReloadReviewForEvent({ type: 'review.opened', reviewId: 'review-1' })).toBe(false);
+  });
+
+  it('does not reload for agent progress notes', () => {
+    expect(
+      shouldReloadReviewForEvent({
+        type: 'agent.note',
+        reviewId: 'review-1',
+        status: 'working',
+        message: 'Applying feedback.'
+      })
+    ).toBe(false);
+  });
+});
+
+describe('mergeReviewEvents', () => {
+  it('orders replayed and live events by sequence while replacing duplicates', () => {
+    const opened: ReviewEvent = { type: 'review.opened', reviewId: 'review-1', seq: 1 };
+    const submitted: ReviewEvent = {
+      type: 'review.submitted',
+      reviewId: 'review-1',
+      seq: 2,
+      counts: { files: 1, comments: 1 }
+    };
+    const note: ReviewEvent = {
+      type: 'agent.note',
+      reviewId: 'review-1',
+      seq: 3,
+      status: 'working',
+      message: 'Applying feedback.'
+    };
+
+    expect(mergeReviewEvents([submitted, opened], note)).toEqual([opened, submitted, note]);
+    expect(
+      mergeReviewEvents([opened, submitted, note], { ...note, message: 'Still working.' })
+    ).toEqual([opened, submitted, { ...note, message: 'Still working.' }]);
   });
 });
 

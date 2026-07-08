@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import { globalStateDir, packageVersion } from '../shared/paths';
+import { globalStateDir, packageVersion, protocolVersion } from '../shared/paths';
 import { readServerInfo, removeServerInfoFile, writeServerInfo } from '../shared/server-info';
 import { createIdleScheduler, normalizeIdleTimeoutMs } from './idle';
 import { createApp } from './index';
@@ -53,6 +53,7 @@ await writeServerInfo({
   pid: process.pid,
   port,
   version: packageVersion,
+  protocolVersion,
   startedAt: new Date().toISOString(),
   stateDir: globalStateDir(),
   cwd: process.cwd(),

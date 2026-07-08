@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { globalServerFile, packageVersion } from '../shared/paths';
+import { globalServerFile, packageVersion, protocolVersion } from '../shared/paths';
 import { readServerInfo, writeServerInfo } from '../shared/server-info';
 import type { ServerInfo } from '../shared/types';
 import {
@@ -41,9 +41,18 @@ describe('isServerResponsive', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ ok: true, version: '0.3.0', activeReviews: 0 }), {
-            headers: { 'content-type': 'application/json' }
-          })
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: '0.3.0',
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: serverInfo.stateDir
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
       )
     );
 
@@ -55,13 +64,70 @@ describe('isServerResponsive', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ ok: true, version: packageVersion, activeReviews: 0 }), {
-            headers: { 'content-type': 'application/json' }
-          })
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: serverInfo.stateDir
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
       )
     );
 
     await expect(isServerResponsive(serverInfo)).resolves.toBe(true);
+  });
+
+  it('rejects daemons with a mismatched protocol version', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion: protocolVersion + 1,
+              activeReviews: 0,
+              stateDir: serverInfo.stateDir
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
+      )
+    );
+
+    await expect(isServerResponsive(serverInfo)).resolves.toBe(false);
+  });
+
+  it('rejects daemons from a different known source path', async () => {
+    const info = { ...serverInfo, daemonPath: '/current/gloss/dist/server/daemon.js' };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: serverInfo.stateDir,
+              daemonPath: '/old/gloss/dist/server/daemon.js'
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
+      )
+    );
+
+    await expect(isServerResponsive(info)).resolves.toBe(false);
   });
 });
 

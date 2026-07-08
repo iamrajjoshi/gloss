@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { appendFile, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ulid } from 'ulid';
 import { type ClearReviewArtifactsOptions, clearReviewArtifacts } from '../shared/cleanup';
@@ -12,6 +12,7 @@ import {
   ensureDir,
   globalReviewDiffFile,
   globalReviewDir,
+  globalReviewEventsFile,
   globalReviewFeedbackFile,
   globalReviewMarkdownFile,
   globalReviewMetaFile,
@@ -28,6 +29,9 @@ import {
 import { normalizeReviewScope, sameReviewScope } from '../shared/review-scope';
 import { isResolvableReviewStatus } from '../shared/reviews';
 import type {
+  AgentClaimResponse,
+  AgentNoteResponse,
+  AgentStatus,
   ClearReviewsResult,
   Comment,
   DiffPayload,
@@ -48,6 +52,7 @@ import {
   isDiffPayload,
   isFeedbackBundle,
   isResolutionBundle,
+  isReviewEvent,
   isReviewTurnMeta,
   isStoredReviewMeta,
   type JsonGuard,
@@ -56,6 +61,11 @@ import {
 } from '../shared/validation';
 
 type Listener = (event: ReviewEvent) => void;
+type ReviewEventInput = ReviewEvent extends infer Event
+  ? Event extends ReviewEvent
+    ? Omit<Event, 'actor' | 'createdAt' | 'id' | 'seq'>
+    : never
+  : never;
 
 interface SubmitResult {
   record: ReviewRecord;
@@ -91,8 +101,11 @@ export class ReviewStore {
     const record = normalizeRecord({ meta, turns: [turn], diff: turn.diff });
     this.reviews.set(id, record);
     await this.persistInitial(record, turn);
-    this.emit({ type: 'review.opened', reviewId: id });
-    return record;
+    const event = await this.appendReviewEvent(id, 'system', {
+      type: 'review.opened',
+      reviewId: id
+    });
+    return withEvents(record, [event]);
   }
 
   async appendTurn(id: string, diff: DiffPayload): Promise<AppendTurnResult> {
@@ -107,14 +120,18 @@ export class ReviewStore {
     const latest = latestTurn(record);
     if (latest.status === 'pending') {
       if (diffFingerprint(latest.diff) === diffFingerprint(diff)) {
-        this.emit({
+        await this.appendReviewEvent(id, 'system', {
           type: 'review.turn.created',
           reviewId: id,
           turnId: latest.id,
           turnIndex: latest.index,
           reused: true
         });
-        return { record, turn: latest, reused: true };
+        return {
+          record: withEvents(record, await this.readEvents(id)),
+          turn: latest,
+          reused: true
+        };
       }
       throw new Error(`Review ${id} already has a pending turn`);
     }
@@ -130,14 +147,18 @@ export class ReviewStore {
     });
     this.reviews.set(id, nextRecord);
     await this.persistInitial(nextRecord, turn);
-    this.emit({
+    await this.appendReviewEvent(id, 'system', {
       type: 'review.turn.created',
       reviewId: id,
       turnId: turn.id,
       turnIndex: turn.index,
       reused: false
     });
-    return { record: nextRecord, turn, reused: false };
+    return {
+      record: withEvents(nextRecord, await this.readEvents(id)),
+      turn,
+      reused: false
+    };
   }
 
   async list(): Promise<ReviewMeta[]> {
@@ -225,7 +246,7 @@ export class ReviewStore {
     ]);
     await this.persistMeta(nextRecord);
 
-    this.emit({
+    await this.appendReviewEvent(id, 'human', {
       type: 'review.submitted',
       reviewId: id,
       turnId: nextTurn.id,
@@ -235,12 +256,96 @@ export class ReviewStore {
         comments: feedback.comments.length
       }
     });
-    return { record: nextRecord, feedbackPath, markdownPath, turn: nextTurn };
+    return {
+      record: withEvents(nextRecord, await this.readEvents(id)),
+      feedbackPath,
+      markdownPath,
+      turn: nextTurn
+    };
   }
 
   async feedback(id: string): Promise<FeedbackBundle | null> {
     const record = await this.get(id);
     return record?.feedback ?? null;
+  }
+
+  async events(id: string, afterSeq = 0): Promise<ReviewEvent[]> {
+    const record = await this.get(id);
+    if (!record) {
+      return [];
+    }
+    return this.readEvents(id, afterSeq);
+  }
+
+  async claim(id: string, message?: string, turnSelector?: string): Promise<AgentClaimResponse> {
+    const record = await this.get(id);
+    if (!record) {
+      throw new Error(`Review ${id} not found`);
+    }
+    const turn = turnSelector
+      ? this.resolveTurnSelector(record, turnSelector)
+      : [...record.turns].reverse().find((candidate) => candidate.status === 'submitted');
+    if (!turn) {
+      throw new Error(`Review ${id} has no submitted unresolved turn to claim`);
+    }
+    if (turn.status !== 'submitted') {
+      throw new Error(`Review ${id} turn ${turn.index} is ${turn.status} and cannot be claimed`);
+    }
+    this.assertResolvable(turn, id);
+    if (!turn.feedbackPath || !turn.markdownPath) {
+      throw new Error(`Review ${id} turn ${turn.index} is missing feedback paths`);
+    }
+    const event = await this.appendReviewEvent(id, 'agent', {
+      type: 'agent.claimed',
+      reviewId: id,
+      turnId: turn.id,
+      turnIndex: turn.index,
+      status: 'claimed',
+      ...(message ? { message } : {})
+    });
+    return {
+      ok: true,
+      reviewId: id,
+      turnId: turn.id,
+      turnIndex: turn.index,
+      status: 'claimed',
+      feedbackPath: turn.feedbackPath,
+      markdownPath: turn.markdownPath,
+      artifactDir: turn.artifactDir,
+      feedback: turn.feedback,
+      ...(turn.resolution ? { resolution: turn.resolution } : {}),
+      event
+    };
+  }
+
+  async addAgentNote(
+    id: string,
+    message: string,
+    status?: AgentStatus,
+    turnSelector?: string
+  ): Promise<AgentNoteResponse> {
+    const record = await this.get(id);
+    if (!record) {
+      throw new Error(`Review ${id} not found`);
+    }
+    const turn = turnSelector ? this.resolveTurnSelector(record, turnSelector) : activeTurn(record);
+    const event = await this.appendReviewEvent(id, 'agent', {
+      type: 'agent.note',
+      reviewId: id,
+      turnId: turn.id,
+      turnIndex: turn.index,
+      ...(status ? { status } : {}),
+      message
+    });
+    return {
+      ok: true,
+      reviewId: id,
+      turnId: turn.id,
+      turnIndex: turn.index,
+      ...(status ? { status } : {}),
+      message,
+      event
+    };
   }
 
   async markResolved(id: string, summary?: string, turnSelector?: string): Promise<ResolveResult> {
@@ -382,6 +487,86 @@ export class ReviewStore {
     };
   }
 
+  private async appendReviewEvent(
+    reviewId: string,
+    actor: NonNullable<ReviewEvent['actor']>,
+    input: ReviewEventInput
+  ): Promise<ReviewEvent> {
+    const persistedEvents = await this.readPersistedEvents(reviewId);
+    let existingEvents = persistedEvents ?? [];
+    if (!persistedEvents && input.type !== 'review.opened') {
+      const record = this.reviews.get(reviewId) ?? (await this.loadKnownReview(reviewId));
+      existingEvents = record ? synthesizeReviewEvents(record) : [];
+      if (existingEvents.length > 0) {
+        await ensureDir(globalReviewDir(reviewId));
+        await writeFile(
+          globalReviewEventsFile(reviewId),
+          `${existingEvents.map((event) => JSON.stringify(event)).join('\n')}\n`
+        );
+      }
+    }
+    const event: ReviewEvent = {
+      ...input,
+      id: ulid(),
+      seq: nextEventSeq(existingEvents),
+      createdAt: new Date().toISOString(),
+      actor
+    } as ReviewEvent;
+    await ensureDir(globalReviewDir(reviewId));
+    await appendFile(globalReviewEventsFile(reviewId), `${JSON.stringify(event)}\n`);
+    const record = this.reviews.get(reviewId);
+    if (record) {
+      this.reviews.set(reviewId, withEvents(record, [...existingEvents, event]));
+    }
+    this.emit(event);
+    return event;
+  }
+
+  private async readEvents(reviewId: string, afterSeq = 0): Promise<ReviewEvent[]> {
+    const persistedEvents = await this.readPersistedEvents(reviewId);
+    if (!persistedEvents) {
+      const record = this.reviews.get(reviewId) ?? (await this.loadKnownReview(reviewId));
+      if (!record) {
+        return [];
+      }
+      const synthesized = synthesizeReviewEvents(record);
+      if (synthesized.length > 0) {
+        await ensureDir(globalReviewDir(reviewId));
+        await writeFile(
+          globalReviewEventsFile(reviewId),
+          `${synthesized.map((event) => JSON.stringify(event)).join('\n')}\n`
+        );
+      }
+      this.reviews.set(reviewId, withEvents(record, synthesized));
+      return synthesized.filter((event) => (event.seq ?? 0) > afterSeq);
+    }
+
+    return persistedEvents.filter((event) => (event.seq ?? 0) > afterSeq);
+  }
+
+  private async readPersistedEvents(reviewId: string): Promise<ReviewEvent[] | null> {
+    let raw: string;
+    try {
+      raw = await readFile(globalReviewEventsFile(reviewId), 'utf8');
+    } catch (error) {
+      if (isFileNotFound(error)) {
+        return null;
+      }
+      throw new Error(`Could not read review events for ${reviewId}: ${formatError(error)}`, {
+        cause: error
+      });
+    }
+
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) =>
+        parseJsonFile(line, isReviewEvent, 'review event', globalReviewEventsFile(reviewId))
+      )
+      .filter((event) => event.reviewId === reviewId);
+  }
+
   private emit(event: ReviewEvent): void {
     for (const listener of this.listeners.get(event.reviewId) ?? []) {
       listener(event);
@@ -477,7 +662,9 @@ export class ReviewStore {
       diff: latest.diff
     });
     this.reviews.set(id, record);
-    return record;
+    const withTimeline = withEvents(record, await this.readEvents(id));
+    this.reviews.set(id, withTimeline);
+    return withTimeline;
   }
 
   private async loadReviewFromTurnsOnly(id: string): Promise<ReviewRecord | null> {
@@ -502,8 +689,10 @@ export class ReviewStore {
       diff: latest.diff
     });
     this.reviews.set(id, record);
-    await this.persistMeta(record);
-    return record;
+    const withTimeline = withEvents(record, await this.readEvents(id));
+    this.reviews.set(id, withTimeline);
+    await this.persistMeta(withTimeline);
+    return withTimeline;
   }
 
   private async loadPersistedTurns(id: string): Promise<ReviewTurn[]> {
@@ -685,7 +874,7 @@ export class ReviewStore {
       path: resolvedPath,
       resolution
     };
-    this.emit({
+    await this.appendReviewEvent(record.meta.id, 'agent', {
       type: 'review.updated',
       reviewId: record.meta.id,
       turnId: nextTurn.id,
@@ -800,6 +989,101 @@ function turnSummary(turn: ReviewTurn): ReviewTurnSummary {
     stats: turn.diff.stats,
     comments: resolutionCounts(turn.feedback, turn.resolution?.comments ?? [])
   };
+}
+
+function withEvents(record: ReviewRecord, events: ReviewEvent[]): ReviewRecord {
+  return { ...record, events: events.toSorted(compareReviewEvents) };
+}
+
+function nextEventSeq(events: ReviewEvent[]): number {
+  return Math.max(0, ...events.map((event) => event.seq ?? 0)) + 1;
+}
+
+function synthesizeReviewEvents(record: ReviewRecord): ReviewEvent[] {
+  let seq = 1;
+  const next = (
+    actor: NonNullable<ReviewEvent['actor']>,
+    input: ReviewEventInput,
+    createdAt: string
+  ): ReviewEvent =>
+    ({
+      ...input,
+      id: ulid(),
+      seq: seq++,
+      createdAt,
+      actor
+    }) as ReviewEvent;
+  const events: ReviewEvent[] = [
+    next('system', { type: 'review.opened', reviewId: record.meta.id }, record.meta.createdAt)
+  ];
+  const turns = record.turns.toSorted((a, b) => a.index - b.index);
+  for (const turn of turns) {
+    if (turn.index > 1) {
+      events.push(
+        next(
+          'system',
+          {
+            type: 'review.turn.created',
+            reviewId: record.meta.id,
+            turnId: turn.id,
+            turnIndex: turn.index,
+            reused: false
+          },
+          turn.createdAt
+        )
+      );
+    }
+    if (turn.feedback) {
+      events.push(
+        next(
+          'human',
+          {
+            type: 'review.submitted',
+            reviewId: record.meta.id,
+            turnId: turn.id,
+            turnIndex: turn.index,
+            counts: {
+              files: countCommentFiles(turn.feedback.comments),
+              comments: turn.feedback.comments.length
+            }
+          },
+          turn.submittedAt ?? turn.feedback.timestamp
+        )
+      );
+    }
+    if (turn.feedback && turn.resolution) {
+      const counts = resolutionCounts(turn.feedback, turn.resolution.comments);
+      events.push(
+        next(
+          'agent',
+          {
+            type: 'review.updated',
+            reviewId: record.meta.id,
+            turnId: turn.id,
+            turnIndex: turn.index,
+            reason: turn.resolution.status === 'resolved' ? 'review-resolved' : 'comment-resolved',
+            status: turn.status,
+            resolutionStatus: turn.resolution.status,
+            counts
+          },
+          turn.resolution.resolvedAt ??
+            turn.resolution.comments.at(-1)?.resolvedAt ??
+            turn.resolvedAt ??
+            turn.submittedAt ??
+            turn.createdAt
+        )
+      );
+    }
+  }
+  return events.toSorted(compareReviewEvents);
+}
+
+function compareReviewEvents(left: ReviewEvent, right: ReviewEvent): number {
+  const seqDelta = (left.seq ?? 0) - (right.seq ?? 0);
+  if (seqDelta !== 0) {
+    return seqDelta;
+  }
+  return (left.createdAt ?? '').localeCompare(right.createdAt ?? '');
 }
 
 function reconcileTurn(

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JsonValue } from '../shared/json';
 import {
   globalReviewDir,
+  globalReviewEventsFile,
   globalReviewMetaFile,
   globalReviewTurnFeedbackFile,
   globalReviewTurnMetaFile,
@@ -17,6 +18,8 @@ import {
   SOURCE_PEEK_RANGE_MAX_LINES
 } from '../shared/types';
 import {
+  isAgentClaimResponse,
+  isAgentNoteResponse,
   isClearReviewsResult,
   isCommitRangeDiffResponse,
   isCreateReviewResponse,
@@ -1389,6 +1392,93 @@ describe('Gloss review API global persistence', () => {
         status: 'resolved',
         resolutionStatus: 'resolved',
         counts: { total: 2, resolved: 2, open: 0 }
+      }
+    ]);
+  });
+
+  it('replays durable review events after the requested sequence', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1' })] })
+    });
+
+    const allEventsResponse = await app.request(`/api/reviews/${created.meta.id}/events`);
+    const allEvents = await readReviewEvents(allEventsResponse, 2);
+    const replayResponse = await app.request(`/api/reviews/${created.meta.id}/events?after=1`);
+    const replayed = await readReviewEvents(replayResponse, 1);
+
+    expect(allEvents.map((event) => event.seq)).toEqual([1, 2]);
+    expect(replayed).toMatchObject([
+      { type: 'review.submitted', reviewId: created.meta.id, seq: 2 }
+    ]);
+    expect(existsSync(globalReviewEventsFile(created.meta.id))).toBe(true);
+  });
+
+  it('records agent claim and note events for live review updates', async () => {
+    const { createApp } = await import('./index');
+    const app = createApp('http://localhost:4321');
+    const createdResponse = await app.request('/api/reviews', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(makeApiDiff())
+    });
+    const created = await responseJson(
+      createdResponse,
+      isCreateReviewResponse,
+      'create review response'
+    );
+    await app.request(`/api/reviews/${created.meta.id}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ comments: [makeComment({ id: 'comment-1' })] })
+    });
+    const eventsResponse = await app.request(`/api/reviews/${created.meta.id}/events?after=2`);
+    const agentEvents = readReviewEvents(eventsResponse, 2);
+
+    const claimResponse = await app.request(`/api/reviews/${created.meta.id}/agent/claim`, {
+      method: 'POST'
+    });
+    const claim = await responseJson(claimResponse, isAgentClaimResponse, 'agent claim response');
+    const noteResponse = await app.request(`/api/reviews/${created.meta.id}/agent/notes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'working', message: 'Applying feedback.' })
+    });
+    const note = await responseJson(noteResponse, isAgentNoteResponse, 'agent note response');
+
+    expect(claim).toMatchObject({
+      ok: true,
+      reviewId: created.meta.id,
+      turnId: created.turn?.id,
+      status: 'claimed'
+    });
+    expect(note).toMatchObject({
+      ok: true,
+      reviewId: created.meta.id,
+      status: 'working',
+      message: 'Applying feedback.'
+    });
+    await expect(agentEvents).resolves.toMatchObject([
+      { type: 'agent.claimed', reviewId: created.meta.id, seq: 3 },
+      {
+        type: 'agent.note',
+        reviewId: created.meta.id,
+        seq: 4,
+        status: 'working',
+        message: 'Applying feedback.'
       }
     ]);
   });

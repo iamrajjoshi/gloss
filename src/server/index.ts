@@ -4,13 +4,13 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { countCommentFiles } from '../shared/comments';
 import { formatError, isFileNotFound } from '../shared/errors';
 import { captureCommitRangeDiff, captureDiffContext } from '../shared/git-diff';
 import type { JsonValue } from '../shared/json';
-import { packageVersion } from '../shared/paths';
-import { isResolvableReviewStatus } from '../shared/reviews';
+import { globalStateDir, packageVersion, protocolVersion } from '../shared/paths';
 import type {
+  AgentClaimRequest,
+  AgentNoteRequest,
   ClearReviewsRequest,
   CommitRangeDiffResponse,
   CreateReviewResponse,
@@ -35,6 +35,8 @@ import type {
 } from '../shared/types';
 import { DIFF_CONTEXT_MAX_LINES } from '../shared/types';
 import {
+  isAgentClaimRequest,
+  isAgentNoteRequest,
   isClearReviewsRequest,
   isCommitRangeDiffRequest,
   isDiffContextRequest,
@@ -80,7 +82,9 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     const response: HealthResponse = {
       ok: true,
       version: packageVersion,
+      protocolVersion,
       activeReviews: reviews.filter((review) => review.status === 'pending').length,
+      stateDir: globalStateDir(),
       ...options.health?.()
     };
     return c.json(response);
@@ -171,15 +175,59 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
     return c.json(feedback);
   });
 
+  app.post('/api/reviews/:id/agent/claim', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readOptionalJsonBody(c, isAgentClaimRequest, 'agent claim request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const body: AgentClaimRequest = parsed.body;
+    try {
+      const result = await reviewStore.claim(id, body.message, body.turn);
+      options.onReviewActivity?.();
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, statusForStoreError(error));
+    }
+  });
+
+  app.post('/api/reviews/:id/agent/notes', async (c) => {
+    const id = c.req.param('id');
+    const existing = await reviewStore.get(id);
+    if (!existing) {
+      return c.json({ error: 'review not found' }, 404);
+    }
+    const parsed = await readJsonBody(c, isAgentNoteRequest, 'agent note request');
+    if (!parsed.ok) {
+      return parsed.response;
+    }
+    const body: AgentNoteRequest = parsed.body;
+    try {
+      const result = await reviewStore.addAgentNote(id, body.message, body.status, body.turn);
+      options.onReviewActivity?.();
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: formatError(error) }, statusForStoreError(error));
+    }
+  });
+
   app.get('/api/reviews/:id/events', async (c) => {
     const id = c.req.param('id');
     const record = await reviewStore.get(id);
     if (!record) {
       return c.json({ error: 'review not found' }, 404);
     }
+    const afterSeq = eventReplayAfterSeq(c);
 
     return streamSSE(c, async (stream) => {
       let closed = false;
+      let replaying = true;
+      let lastSentSeq = afterSeq;
+      const bufferedEvents: ReviewEvent[] = [];
       let pending: Promise<void> = Promise.resolve();
       let cleanup: (() => void) | null = null;
       let close: (() => void) | null = null;
@@ -196,8 +244,20 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       });
       unregisterEventStream = options.registerEventStream?.(() => close?.()) ?? null;
       const send = (event: ReviewEvent) => {
+        const eventSeq = event.seq ?? 0;
+        if (eventSeq > 0 && eventSeq <= lastSentSeq) {
+          return;
+        }
+        if (eventSeq > 0) {
+          lastSentSeq = eventSeq;
+        }
         pending = pending
-          .then(() => stream.writeSSE({ data: JSON.stringify(event) }))
+          .then(() => {
+            const data = JSON.stringify(event);
+            return event.seq
+              ? stream.writeSSE({ data, id: String(event.seq) })
+              : stream.writeSSE({ data });
+          })
           .then(() => {
             if (event.type === 'review.cancelled') {
               close?.();
@@ -205,7 +265,13 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
           });
         void pending.catch(() => close?.());
       };
-      const unsubscribe = reviewStore.subscribe(id, send);
+      const unsubscribe = reviewStore.subscribe(id, (event) => {
+        if (replaying) {
+          bufferedEvents.push(event);
+          return;
+        }
+        send(event);
+      });
       const heartbeat = setInterval(() => {
         pending = pending.then(async () => {
           await stream.write(`: keep-alive ${Date.now()}\n\n`);
@@ -220,18 +286,12 @@ export function createApp(origin: string, options: AppOptions = {}): Hono {
       };
       stream.onAbort(() => close?.());
 
-      send({ type: 'review.opened', reviewId: id });
-      if (isResolvableReviewStatus(record.meta.status) && record.feedback) {
-        send({
-          type: 'review.submitted',
-          reviewId: id,
-          turnId: record.meta.activeTurnId,
-          turnIndex: record.meta.turns?.find((turn) => turn.id === record.meta.activeTurnId)?.index,
-          counts: {
-            files: countCommentFiles(record.feedback.comments),
-            comments: record.feedback.comments.length
-          }
-        });
+      for (const event of await reviewStore.events(id, afterSeq)) {
+        send(event);
+      }
+      replaying = false;
+      for (const event of bufferedEvents) {
+        send(event);
       }
       await closedPromise;
     });
@@ -756,6 +816,13 @@ function serveRootFile(fileName: string, contentType: string) {
   };
 }
 
+function eventReplayAfterSeq(c: Context): number {
+  const url = new URL(c.req.url);
+  const rawAfter = url.searchParams.get('after') ?? c.req.header('last-event-id') ?? '0';
+  const afterSeq = Number(rawAfter);
+  return Number.isInteger(afterSeq) && afterSeq > 0 ? afterSeq : 0;
+}
+
 async function readJsonBody<T>(
   c: Context,
   guard: JsonGuard<T>,
@@ -771,6 +838,39 @@ async function readJsonBody<T>(
     };
   }
 
+  try {
+    return { ok: true, body: parseJsonValue(body, guard, label) };
+  } catch (error) {
+    return {
+      ok: false,
+      response: c.json({ error: formatError(error) }, 400)
+    };
+  }
+}
+
+async function readOptionalJsonBody<T>(
+  c: Context,
+  guard: JsonGuard<T>,
+  label: string
+): Promise<{ ok: true; body: T } | { ok: false; response: Response }> {
+  let raw: string;
+  try {
+    raw = await c.req.text();
+  } catch (error) {
+    return {
+      ok: false,
+      response: c.json({ error: `invalid JSON body: ${formatError(error)}` }, 400)
+    };
+  }
+  let body: JsonValue;
+  try {
+    body = raw.trim().length > 0 ? JSON.parse(raw) : {};
+  } catch (error) {
+    return {
+      ok: false,
+      response: c.json({ error: `invalid JSON body: ${formatError(error)}` }, 400)
+    };
+  }
   try {
     return { ok: true, body: parseJsonValue(body, guard, label) };
   } catch (error) {

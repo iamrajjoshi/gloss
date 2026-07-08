@@ -4,10 +4,12 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  globalLastPortFile,
   globalServerFile,
   globalServerLockDir,
   globalStateDir,
-  packageVersion
+  packageVersion,
+  protocolVersion
 } from '../shared/paths';
 import type { ServerInfo } from '../shared/types';
 
@@ -37,6 +39,124 @@ afterEach(async () => {
 });
 
 describe('lifecycle server info permission recovery', () => {
+  it('reuses the last successful port when server.json is gone', async () => {
+    await useTempStateDir();
+    await writeFile(globalLastPortFile(), '45678\n');
+    const spawnMock = vi.fn(
+      (_command: string, _args: string[], _options: { env?: NodeJS.ProcessEnv }) => ({
+        pid: 12345,
+        unref: vi.fn()
+      })
+    );
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return { ...actual, existsSync: vi.fn(() => true) };
+    });
+    vi.doMock('node:child_process', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:child_process')>();
+      return { ...actual, spawn: spawnMock };
+    });
+    vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | 0) => {
+      if (pid === 12345 && signal === 0) {
+        return true;
+      }
+      return true;
+    }) as typeof process.kill);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: globalStateDir(),
+              daemonPath: daemonPathForHealth()
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
+      )
+    );
+    const { ensureServer } = await import('./lifecycle');
+
+    const info = await ensureServer();
+
+    expect(info).toMatchObject({ pid: 12345, port: 45678 });
+    expect(spawnMock).toHaveBeenCalledOnce();
+    expect(spawnMock.mock.calls[0]?.[2]?.env?.GLOSS_PORT).toBe('45678');
+    await expect(readFile(globalLastPortFile(), 'utf8')).resolves.toBe('45678\n');
+  });
+
+  it('keeps the healthy daemon when remembering the last port is denied', async () => {
+    await useTempStateDir();
+    const spawnMock = vi.fn(
+      (_command: string, _args: string[], _options: { env?: NodeJS.ProcessEnv }) => ({
+        pid: 12345,
+        unref: vi.fn()
+      })
+    );
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>();
+      return { ...actual, existsSync: vi.fn(() => true) };
+    });
+    const writeFileMock = vi.fn(async (target: unknown, data: unknown, options?: unknown) => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      if (target === globalLastPortFile()) {
+        throw permissionError('last-port denied');
+      }
+      return actual.writeFile(target as any, data as any, options as any);
+    });
+    vi.doMock('node:fs/promises', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs/promises')>();
+      return { ...actual, writeFile: writeFileMock };
+    });
+    vi.doMock('node:child_process', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:child_process')>();
+      return { ...actual, spawn: spawnMock };
+    });
+    const killMock = vi.spyOn(process, 'kill').mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | 0
+    ) => {
+      if (pid === 12345 && signal === 0) {
+        return true;
+      }
+      return true;
+    }) as typeof process.kill);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: globalStateDir(),
+              daemonPath: daemonPathForHealth()
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
+      )
+    );
+    const { ensureServer } = await import('./lifecycle');
+
+    const info = await ensureServer();
+
+    expect(info).toMatchObject({ pid: 12345 });
+    expect(spawnMock).toHaveBeenCalledOnce();
+    expect(spawnMock.mock.calls[0]?.[2]?.env?.GLOSS_PORT).toBe(String(info.port));
+    expect(writeFileMock).toHaveBeenCalledWith(globalLastPortFile(), `${info.port}\n`);
+    expect(killMock).not.toHaveBeenCalledWith(12345, 'SIGTERM');
+  });
+
   it('starts a new daemon when stale server.json cleanup is denied', async () => {
     await useTempStateDir();
     await writeFile(globalServerFile(), serializeServerInfo(makeServerInfo(987654, 43210)));
@@ -63,9 +183,19 @@ describe('lifecycle server info permission recovery', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ ok: true, version: packageVersion, activeReviews: 0 }), {
-            headers: { 'content-type': 'application/json' }
-          })
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: globalStateDir(),
+              daemonPath: daemonPathForHealth()
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
       )
     );
     const { ensureServer } = await import('./lifecycle');
@@ -140,9 +270,19 @@ describe('lifecycle server info permission recovery', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ ok: true, version: packageVersion, activeReviews: 0 }), {
-            headers: { 'content-type': 'application/json' }
-          })
+          new Response(
+            JSON.stringify({
+              ok: true,
+              version: packageVersion,
+              protocolVersion,
+              activeReviews: 0,
+              stateDir: globalStateDir(),
+              daemonPath: daemonPathForHealth()
+            }),
+            {
+              headers: { 'content-type': 'application/json' }
+            }
+          )
       )
     );
     const { ensureServer } = await import('./lifecycle');
@@ -234,6 +374,10 @@ function makeServerInfo(pid: number, port: number, daemonPath?: string): ServerI
     stateDir: globalStateDir(),
     ...(daemonPath ? { daemonPath } : {})
   };
+}
+
+function daemonPathForHealth(): string {
+  return path.resolve('src/server/daemon.js');
 }
 
 function serializeServerInfo(info: ServerInfo): string {

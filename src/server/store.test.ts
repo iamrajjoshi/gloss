@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   globalReviewDiffFile,
   globalReviewDir,
+  globalReviewEventsFile,
   globalReviewFeedbackFile,
   globalReviewMarkdownFile,
   globalReviewMetaFile,
@@ -14,7 +15,7 @@ import {
   globalReviewTurnMetaFile,
   globalReviewTurnResolvedFile
 } from '../shared/paths';
-import { isResolutionBundle, parseJson } from '../shared/validation';
+import { isResolutionBundle, isReviewEvent, parseJson } from '../shared/validation';
 import { makeComment, makeDiff } from '../test/factories';
 import { ReviewStore } from './store';
 
@@ -147,6 +148,41 @@ describe('ReviewStore global persistence', () => {
     ]);
   });
 
+  it('persists and replays ordered review timeline events', async () => {
+    const store = new ReviewStore();
+    const record = await store.create(makeStoreDiff());
+    await store.submit(record.meta.id, [makeComment({ id: 'comment-1' })]);
+    const claim = await store.claim(record.meta.id);
+    const note = await store.addAgentNote(record.meta.id, 'Applying feedback.', 'working');
+    await store.resolveComment(record.meta.id, 'comment-1', 'fixed locally');
+
+    const events = await store.events(record.meta.id);
+    const rawEvents = (await readFile(globalReviewEventsFile(record.meta.id), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => parseJson(line, isReviewEvent, 'review event'));
+
+    expect(events.map((event) => event.type)).toEqual([
+      'review.opened',
+      'review.submitted',
+      'agent.claimed',
+      'agent.note',
+      'review.updated'
+    ]);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(rawEvents).toEqual(events);
+    expect(claim.event.seq).toBe(3);
+    expect(note.event).toMatchObject({
+      type: 'agent.note',
+      status: 'working',
+      message: 'Applying feedback.'
+    });
+    await expect(store.events(record.meta.id, 3)).resolves.toMatchObject([
+      { type: 'agent.note', seq: 4 },
+      { type: 'review.updated', seq: 5 }
+    ]);
+  });
+
   it('appends, reuses, and reloads review turns', async () => {
     const store = new ReviewStore();
     const first = await store.create(makeStoreDiff());
@@ -188,6 +224,26 @@ describe('ReviewStore global persistence', () => {
 
     expect(submitted.turn.index).toBe(1);
     expect(resolvedFirstTurnComment.turnIndex).toBe(1);
+  });
+
+  it('synthesizes a timeline for existing reviews without an events file', async () => {
+    const store = new ReviewStore();
+    const record = await store.create(makeStoreDiff());
+    await store.submit(record.meta.id, [makeComment({ id: 'comment-1' })]);
+    await store.markResolved(record.meta.id, 'fixed locally');
+    await rm(globalReviewEventsFile(record.meta.id), { force: true });
+
+    const reloaded = new ReviewStore();
+    const loaded = await reloaded.get(record.meta.id);
+    const events = await reloaded.events(record.meta.id);
+
+    expect(loaded?.events?.map((event) => event.type)).toEqual([
+      'review.opened',
+      'review.submitted',
+      'review.updated'
+    ]);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+    expect(existsSync(globalReviewEventsFile(record.meta.id))).toBe(true);
   });
 
   it('persists the submitted commit scope for a turn', async () => {

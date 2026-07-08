@@ -319,6 +319,14 @@ export interface ResolveResult {
   resolution: ResolutionBundle;
 }
 
+export const REVIEW_EVENT_ACTORS = ['human', 'agent', 'system'] as const;
+
+export type ReviewEventActor = (typeof REVIEW_EVENT_ACTORS)[number];
+
+export const AGENT_STATUSES = ['claimed', 'working', 'blocked', 'completed', 'failed'] as const;
+
+export type AgentStatus = (typeof AGENT_STATUSES)[number];
+
 export const REVIEW_UPDATE_REASONS = [
   'review-resolved',
   'comment-resolved',
@@ -328,9 +336,20 @@ export const REVIEW_UPDATE_REASONS = [
 
 export type ReviewUpdateReason = (typeof REVIEW_UPDATE_REASONS)[number];
 
+interface ReviewEventEnvelope {
+  id?: string;
+  seq?: number;
+  createdAt?: string;
+  actor?: ReviewEventActor;
+}
+
 export type ReviewEvent =
-  | { type: 'review.opened'; reviewId: string }
+  | (ReviewEventEnvelope & { type: 'review.opened'; reviewId: string })
   | {
+      id?: string;
+      seq?: number;
+      createdAt?: string;
+      actor?: ReviewEventActor;
       type: 'review.turn.created';
       reviewId: string;
       turnId: string;
@@ -338,6 +357,10 @@ export type ReviewEvent =
       reused: boolean;
     }
   | {
+      id?: string;
+      seq?: number;
+      createdAt?: string;
+      actor?: ReviewEventActor;
       type: 'review.submitted';
       reviewId: string;
       turnId?: string;
@@ -345,6 +368,10 @@ export type ReviewEvent =
       counts: { files: number; comments: number };
     }
   | {
+      id?: string;
+      seq?: number;
+      createdAt?: string;
+      actor?: ReviewEventActor;
       type: 'review.updated';
       reviewId: string;
       turnId?: string;
@@ -354,7 +381,31 @@ export type ReviewEvent =
       resolutionStatus: ResolutionStatus;
       counts: ResolutionCounts;
     }
-  | { type: 'review.cancelled'; reviewId: string };
+  | (ReviewEventEnvelope & { type: 'review.cancelled'; reviewId: string })
+  | {
+      id?: string;
+      seq?: number;
+      createdAt?: string;
+      actor?: ReviewEventActor;
+      type: 'agent.claimed';
+      reviewId: string;
+      turnId: string;
+      turnIndex: number;
+      status: 'claimed';
+      message?: string;
+    }
+  | {
+      id?: string;
+      seq?: number;
+      createdAt?: string;
+      actor?: ReviewEventActor;
+      type: 'agent.note';
+      reviewId: string;
+      turnId?: string;
+      turnIndex?: number;
+      status?: AgentStatus;
+      message: string;
+    };
 
 export interface ReviewTurnMeta {
   id: string;
@@ -388,12 +439,14 @@ export interface ReviewRecord {
   diff: DiffPayload;
   feedback?: FeedbackBundle;
   resolution?: ResolutionBundle;
+  events?: ReviewEvent[];
 }
 
 export interface ServerInfo {
   pid: number;
   port: number;
   version: string;
+  protocolVersion?: number;
   startedAt: string;
   stateDir: string;
   cwd?: string;
@@ -415,6 +468,7 @@ export interface OpenResult {
 export interface HealthResponse {
   ok: boolean;
   version: string;
+  protocolVersion: number;
   activeReviews: number;
   connections?: number;
   stateDir?: string;
@@ -447,6 +501,41 @@ export interface SubmitReviewRequest {
 export interface ResolutionRequest {
   summary?: string;
   turn?: string;
+}
+
+export interface AgentClaimRequest {
+  message?: string;
+  turn?: string;
+}
+
+export interface AgentClaimResponse {
+  ok: true;
+  reviewId: string;
+  turnId: string;
+  turnIndex: number;
+  status: 'claimed';
+  feedbackPath: string;
+  markdownPath: string;
+  artifactDir: string;
+  feedback: FeedbackBundle;
+  resolution?: ResolutionBundle;
+  event: ReviewEvent;
+}
+
+export interface AgentNoteRequest {
+  message: string;
+  status?: AgentStatus;
+  turn?: string;
+}
+
+export interface AgentNoteResponse {
+  ok: true;
+  reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
+  status?: AgentStatus;
+  message: string;
+  event: ReviewEvent;
 }
 
 export const OPEN_FILE_SCOPES = ['review', 'repo'] as const;
