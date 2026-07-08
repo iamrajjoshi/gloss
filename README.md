@@ -62,7 +62,8 @@ npx skills add iamrajjoshi/gloss --skill gloss -a claude-code
 `-g` installs to `~/.claude/skills/`, `-a claude-code` targets Claude Code, and
 `--skill gloss` installs only the Gloss skill folder from the repo. The skill
 teaches agents to run `gloss open --json`, wait for browser submission, read
-`feedbackPath`, apply comments, validate, continue the same review with
+`feedbackPath`, claim work with `gloss claim`, post visible progress with
+`gloss note`, apply comments, validate, continue the same review with
 `gloss open --review <reviewId> --json`, and mark comments or turns resolved
 with `gloss resolve`.
 
@@ -77,6 +78,8 @@ curl -fsSL https://getgloss.dev/install.sh | sh
 ```text
 gloss open [--base <ref>] [--review <reviewId>] [--print-url] [--no-open] [--json] [--no-watch] [--timeout <s>]
 gloss watch <reviewId>
+gloss claim <reviewId> [--message <text>] [--turn <id-or-index>] [--json]
+gloss note <reviewId> --message <text> [--status claimed|working|blocked|completed|failed] [--turn <id-or-index>] [--json]
 gloss resolve <reviewId> [--comment <commentId>] [--turn <id-or-index>] [--summary <text>] [--json]
 gloss start [--port <port>]
 gloss status
@@ -99,12 +102,16 @@ compares only against the requested ref and does not switch to a branch diff.
 `--no-watch` when a caller only needs to open the review and return immediately.
 Use `gloss open --review <reviewId> --json` after applying feedback to capture
 the next diff as another turn in the same browser review.
+Use `gloss claim <reviewId> --json` when an agent starts handling submitted
+feedback, and `gloss note <reviewId> --status working --message "..."` for
+progress that should appear in the browser review.
 The background server exits automatically after a short idle window with no
 live review clients. Pending review artifacts stay on disk and can be resumed,
-but they do not keep the daemon alive by themselves. `gloss doctor` reports
-unmanaged daemon processes, and normal startup/status commands also clean up
-clearly stale daemons. `gloss stop --all` cleans up every Gloss daemon for the
-current user.
+but they do not keep the daemon alive by themselves. Gloss remembers the last
+successful port and tries it first on restart, so an old review tab can usually
+recover with a refresh after idle shutdown. `gloss doctor` reports unmanaged
+daemon processes, and normal startup/status commands also clean up clearly stale
+daemons. `gloss stop --all` cleans up every Gloss daemon for the current user.
 
 You do not need to unlock `~/.gloss/server.json` after finishing a review.
 That file is only the background daemon pointer, not a review lock. If a
@@ -145,6 +152,7 @@ Submitted reviews are written to:
 ```text
 ~/.gloss/reviews/<reviewId>/
   meta.json
+  events.jsonl
   turns/
     <turnId>/
       turn.json
@@ -157,8 +165,9 @@ Submitted reviews are written to:
 `feedback.json` is the machine-readable payload and includes `reviewScope` for
 submitted commit-preview scope. `feedback.md` is a readable summary with
 general comments first, then file comments ordered by path and line.
-`resolved.json` is mutable resolution progress for individual comments and the
-turn. After applying feedback, use
+`events.jsonl` is the durable review timeline used to replay browser updates
+after reconnects or server restarts. `resolved.json` is mutable resolution
+progress for individual comments and the turn. After applying feedback, use
 `gloss resolve <reviewId> --comment <commentId> --summary "..."` for a single
 comment or `gloss resolve <reviewId> --turn <id-or-index> --summary "..."` for a
 specific turn. Without `--turn`, whole-review resolution targets the latest

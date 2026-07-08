@@ -39,6 +39,7 @@ import type {
   LineComment,
   OpenFileTarget,
   OpenFileTargetInfo,
+  ReviewEvent,
   ReviewRecord,
   ReviewScope,
   ReviewTurn
@@ -85,6 +86,13 @@ const EMPTY_DIFF: Pick<DiffPayload, 'files' | 'stats'> = {
 };
 const EMPTY_DIFF_FILES: DiffPayload['files'] = [];
 const EMPTY_COMMIT_DIFFS: CommitDiff[] = [];
+const EMPTY_REVIEW_SESSION_STATE: ReviewSessionState = {
+  agentStatus: null,
+  latestAgentMessage: null,
+  latestAgentTimestamp: null,
+  latestReviewEvent: null,
+  progress: null
+};
 const FALLBACK_OPEN_TARGETS: OpenFileTargetInfo[] = [
   { label: 'Default app', target: 'default' },
   { label: 'Open in folder', target: 'folder' }
@@ -282,7 +290,12 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     files: loadViewedFiles(reviewId)
   }));
   const [openFileError, setOpenFileError] = useState<string | null>(null);
+  const [timelineEvents, setTimelineEvents] = useState<ReviewEvent[]>([]);
+  const [eventConnectionState, setEventConnectionState] = useState<
+    'connecting' | 'connected' | 'disconnected'
+  >('connecting');
   const sourcePeekRequestId = useRef(0);
+  const lastEventSeq = useRef(0);
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
   const setDraft = useReviewStore((state) => state.setDraft);
@@ -362,9 +375,20 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     activeFilePath && filteredFiles.some((file) => file.path === activeFilePath)
       ? activeFilePath
       : null;
+  const sessionState = useMemo(
+    () =>
+      displayRecord
+        ? reviewSessionState(timelineEvents, displayRecord)
+        : EMPTY_REVIEW_SESSION_STATE,
+    [timelineEvents, displayRecord]
+  );
 
   const applyRecord = useCallback((nextRecord: ReviewRecord) => {
     setRecord(nextRecord);
+    if (nextRecord.events) {
+      setTimelineEvents(nextRecord.events);
+      lastEventSeq.current = Math.max(0, ...nextRecord.events.map((event) => event.seq ?? 0));
+    }
     document.title = reviewDisplayTitle(nextRecord);
   }, []);
 
@@ -390,9 +414,19 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     applyRecord(nextRecord);
   }, [reviewId, selectedTurnId, latestTurnId, resetTurnView, applyRecord]);
 
+  const appendTimelineEvent = useCallback((event: ReviewEvent) => {
+    if (event.seq && event.seq > lastEventSeq.current) {
+      lastEventSeq.current = event.seq;
+    }
+    setTimelineEvents((current) => mergeReviewEvents(current, event));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     reset();
+    lastEventSeq.current = 0;
+    setTimelineEvents([]);
+    setEventConnectionState('connecting');
     fetchReview(reviewId)
       .then((nextRecord) => {
         if (cancelled) {
@@ -468,20 +502,28 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   }, [effectiveCommitView, selectedTurn, reviewId]);
 
   useEffect(() => {
-    const events = new EventSource(`/api/reviews/${reviewId}/events`);
+    const events = new EventSource(`/api/reviews/${reviewId}/events?after=${lastEventSeq.current}`);
+    setEventConnectionState('connecting');
+    events.onopen = () => {
+      setEventConnectionState('connected');
+    };
     events.onmessage = (message) => {
       const event = parseJson(message.data, isReviewEvent, 'review event');
+      appendTimelineEvent(event);
       if (shouldReloadReviewForEvent(event)) {
         reloadReview().catch((reason) => {
           setError(reason instanceof Error ? reason.message : String(reason));
         });
       }
     };
+    events.onerror = () => {
+      setEventConnectionState('disconnected');
+    };
 
     return () => {
       events.close();
     };
-  }, [reviewId, reloadReview]);
+  }, [reviewId, reloadReview, appendTimelineEvent]);
 
   if (error) {
     return (
@@ -834,6 +876,10 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                 setSelectedTurnId(turnId === latestTurnId ? null : turnId);
               }}
             />
+            {eventConnectionState === 'disconnected' ? (
+              <div className="event-connection-banner">Reconnecting to live review updates</div>
+            ) : null}
+            <ReviewSessionPanel state={sessionState} />
           </header>
           {openFileError ? <div className="open-file-message error">{openFileError}</div> : null}
           {visibleRangeDiffError ? (
@@ -959,6 +1005,143 @@ function recordForTurn(record: ReviewRecord, turn: ReviewTurn): ReviewRecord {
     ...(turn.feedback ? { feedback: turn.feedback } : { feedback: undefined }),
     ...(turn.resolution ? { resolution: turn.resolution } : { resolution: undefined })
   };
+}
+
+interface ReviewSessionState {
+  agentStatus: string | null;
+  latestAgentMessage: string | null;
+  latestAgentTimestamp: string | null;
+  latestReviewEvent: ReviewEvent | null;
+  progress: string | null;
+}
+
+export function mergeReviewEvents(current: ReviewEvent[], next: ReviewEvent): ReviewEvent[] {
+  const identity = eventIdentity(next);
+  const existingIndex = current.findIndex((event) => eventIdentity(event) === identity);
+  const merged =
+    existingIndex >= 0
+      ? current.map((event, index) => (index === existingIndex ? next : event))
+      : [...current, next];
+  return merged.toSorted(compareReviewEvents);
+}
+
+function reviewSessionState(events: ReviewEvent[], record: ReviewRecord): ReviewSessionState {
+  const agentEvents = events.filter(
+    (event) => event.type === 'agent.claimed' || event.type === 'agent.note'
+  );
+  const latestAgentEvent = agentEvents.at(-1) ?? null;
+  const latestReviewEvent =
+    [...events]
+      .reverse()
+      .find((event) => event.type.startsWith('review.') && event.type !== 'review.opened') ?? null;
+  const counts = reviewResolutionCounts(record);
+  return {
+    agentStatus: agentStatusLabel(latestAgentEvent),
+    latestAgentMessage: agentMessage(latestAgentEvent),
+    latestAgentTimestamp: latestAgentEvent?.createdAt ?? null,
+    latestReviewEvent,
+    progress: counts.total > 0 ? `${counts.resolved} of ${counts.total} comments resolved` : null
+  };
+}
+
+function ReviewSessionPanel({ state }: { state: ReviewSessionState }) {
+  if (!state.agentStatus && !state.latestReviewEvent && !state.progress) {
+    return null;
+  }
+  return (
+    <section className="review-session-panel">
+      <div className="review-session-item">
+        <span className="review-session-label">Review</span>
+        <span className="review-session-value">
+          {reviewEventLabel(state.latestReviewEvent) ?? 'Open'}
+        </span>
+      </div>
+      {state.progress ? (
+        <div className="review-session-item">
+          <span className="review-session-label">Progress</span>
+          <span className="review-session-value">{state.progress}</span>
+        </div>
+      ) : null}
+      {state.agentStatus ? (
+        <div className="review-session-item agent">
+          <span className="review-session-label">Agent</span>
+          <span className="review-session-value">{state.agentStatus}</span>
+          {state.latestAgentTimestamp ? (
+            <time dateTime={state.latestAgentTimestamp}>
+              {formatTimestamp(state.latestAgentTimestamp)}
+            </time>
+          ) : null}
+        </div>
+      ) : null}
+      {state.latestAgentMessage ? (
+        <p className="review-session-message">{state.latestAgentMessage}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function eventIdentity(event: ReviewEvent): string {
+  if (event.seq !== undefined) {
+    return `seq:${event.seq}`;
+  }
+  if (event.id) {
+    return `id:${event.id}`;
+  }
+  return `${event.type}:${event.reviewId}:${event.createdAt ?? ''}:${JSON.stringify(event)}`;
+}
+
+function compareReviewEvents(left: ReviewEvent, right: ReviewEvent): number {
+  const leftSeq = left.seq ?? 0;
+  const rightSeq = right.seq ?? 0;
+  if (leftSeq !== rightSeq) {
+    return leftSeq - rightSeq;
+  }
+  return (left.createdAt ?? '').localeCompare(right.createdAt ?? '');
+}
+
+function agentStatusLabel(event: ReviewEvent | null): string | null {
+  if (!event) {
+    return null;
+  }
+  if (event.type === 'agent.claimed') {
+    return 'Claimed';
+  }
+  if (event.type === 'agent.note' && event.status) {
+    return event.status.charAt(0).toUpperCase() + event.status.slice(1);
+  }
+  return 'Updated';
+}
+
+function agentMessage(event: ReviewEvent | null): string | null {
+  if (!event) {
+    return null;
+  }
+  if (event.type === 'agent.claimed') {
+    return event.message ?? null;
+  }
+  if (event.type === 'agent.note') {
+    return event.message;
+  }
+  return null;
+}
+
+function reviewEventLabel(event: ReviewEvent | null): string | null {
+  if (!event) {
+    return null;
+  }
+  if (event.type === 'review.turn.created') {
+    return `Turn ${event.turnIndex} opened`;
+  }
+  if (event.type === 'review.submitted') {
+    return `Submitted · ${event.counts.comments} comments`;
+  }
+  if (event.type === 'review.updated') {
+    return event.status === 'resolved' ? 'Resolved' : 'Submitted';
+  }
+  if (event.type === 'review.cancelled') {
+    return 'Cancelled';
+  }
+  return null;
 }
 
 function ReviewContextBar({

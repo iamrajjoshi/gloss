@@ -1,5 +1,10 @@
 import type { JsonValue } from './json';
 import type {
+  AgentClaimRequest,
+  AgentClaimResponse,
+  AgentNoteRequest,
+  AgentNoteResponse,
+  AgentStatus,
   ClearReviewEntry,
   ClearReviewsRequest,
   ClearReviewsResult,
@@ -35,6 +40,7 @@ import type {
   ResolvedComment,
   ResolveResult,
   ReviewEvent,
+  ReviewEventActor,
   ReviewMeta,
   ReviewRecord,
   ReviewScope,
@@ -50,12 +56,14 @@ import type {
   SubmitReviewRequest
 } from './types';
 import {
+  AGENT_STATUSES,
   DIFF_FALLBACK_REASONS,
   DIFF_LINE_TYPES,
   DIFF_SCOPE_MODES,
   OPEN_FILE_SCOPES,
   OPEN_FILE_TARGETS,
   RESOLUTION_STATUSES,
+  REVIEW_EVENT_ACTORS,
   REVIEW_SCOPE_MODES,
   REVIEW_STATUSES,
   REVIEW_UPDATE_REASONS,
@@ -95,6 +103,7 @@ export function isServerInfo(value: unknown): value is ServerInfo {
     isNumber(value.pid) &&
     isNumber(value.port) &&
     isString(value.version) &&
+    isOptionalNumber(value.protocolVersion) &&
     isString(value.startedAt) &&
     isString(value.stateDir) &&
     isOptionalString(value.cwd) &&
@@ -107,6 +116,7 @@ export function isHealthResponse(value: unknown): value is HealthResponse {
     isRecord(value) &&
     isBoolean(value.ok) &&
     isString(value.version) &&
+    isNumber(value.protocolVersion) &&
     isNumber(value.activeReviews) &&
     isOptionalNumber(value.connections) &&
     isOptionalString(value.stateDir) &&
@@ -324,6 +334,49 @@ export function isResolveResult(value: unknown): value is ResolveResult {
   );
 }
 
+export function isAgentClaimRequest(value: unknown): value is AgentClaimRequest {
+  return isRecord(value) && isOptionalString(value.message) && isOptionalString(value.turn);
+}
+
+export function isAgentClaimResponse(value: unknown): value is AgentClaimResponse {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isString(value.reviewId) &&
+    isString(value.turnId) &&
+    isNumber(value.turnIndex) &&
+    value.status === 'claimed' &&
+    isString(value.feedbackPath) &&
+    isString(value.markdownPath) &&
+    isString(value.artifactDir) &&
+    isFeedbackBundle(value.feedback) &&
+    isOptional(value.resolution, isResolutionBundle) &&
+    isReviewEvent(value.event)
+  );
+}
+
+export function isAgentNoteRequest(value: unknown): value is AgentNoteRequest {
+  return (
+    isRecord(value) &&
+    isString(value.message) &&
+    isOptional(value.status, isAgentStatus) &&
+    isOptionalString(value.turn)
+  );
+}
+
+export function isAgentNoteResponse(value: unknown): value is AgentNoteResponse {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isString(value.reviewId) &&
+    isOptionalString(value.turnId) &&
+    isOptionalNumber(value.turnIndex) &&
+    isOptional(value.status, isAgentStatus) &&
+    isString(value.message) &&
+    isReviewEvent(value.event)
+  );
+}
+
 export function isSubmitReviewRequest(value: unknown): value is SubmitReviewRequest {
   return (
     isRecord(value) &&
@@ -343,7 +396,8 @@ export function isReviewRecord(value: unknown): value is ReviewRecord {
     isArrayOf(value.turns, isReviewTurn) &&
     isDiffPayload(value.diff) &&
     isOptional(value.feedback, isFeedbackBundle) &&
-    isOptional(value.resolution, isResolutionBundle)
+    isOptional(value.resolution, isResolutionBundle) &&
+    isOptional(value.events, (events): events is ReviewEvent[] => isArrayOf(events, isReviewEvent))
   );
 }
 
@@ -427,6 +481,9 @@ export function isReviewEvent(value: unknown): value is ReviewEvent {
   if (!isRecord(value) || !isString(value.reviewId) || !isString(value.type)) {
     return false;
   }
+  if (!hasValidReviewEventEnvelope(value)) {
+    return false;
+  }
   switch (value.type) {
     case 'review.opened':
     case 'review.cancelled':
@@ -449,6 +506,20 @@ export function isReviewEvent(value: unknown): value is ReviewEvent {
         isReviewStatus(value.status) &&
         isResolutionStatus(value.resolutionStatus) &&
         isResolutionCounts(value.counts)
+      );
+    case 'agent.claimed':
+      return (
+        isString(value.turnId) &&
+        isNumber(value.turnIndex) &&
+        value.status === 'claimed' &&
+        isOptionalString(value.message)
+      );
+    case 'agent.note':
+      return (
+        isOptionalString(value.turnId) &&
+        isOptionalNumber(value.turnIndex) &&
+        isOptional(value.status, isAgentStatus) &&
+        isString(value.message)
       );
     default:
       return false;
@@ -694,6 +765,23 @@ function isReviewUpdateReason(
   value: unknown
 ): value is Extract<ReviewEvent, { type: 'review.updated' }>['reason'] {
   return isOneOf(value, REVIEW_UPDATE_REASONS);
+}
+
+function isReviewEventActor(value: unknown): value is ReviewEventActor {
+  return isOneOf(value, REVIEW_EVENT_ACTORS);
+}
+
+function isAgentStatus(value: unknown): value is AgentStatus {
+  return isOneOf(value, AGENT_STATUSES);
+}
+
+function hasValidReviewEventEnvelope(value: Record<string, unknown>): boolean {
+  return (
+    isOptionalString(value.id) &&
+    isOptionalNumber(value.seq) &&
+    isOptionalString(value.createdAt) &&
+    isOptional(value.actor, isReviewEventActor)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

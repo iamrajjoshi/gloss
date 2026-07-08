@@ -10,6 +10,9 @@ import { formatError, isFileNotFound } from '../shared/errors';
 import { ensureDir, globalServerFile, globalStateDir, packageVersion } from '../shared/paths';
 import { serverInfoPermissionMessage } from '../shared/server-info';
 import type {
+  AgentClaimResponse,
+  AgentNoteResponse,
+  AgentStatus,
   ClearReviewsResult,
   DiffPayload,
   FeedbackBundle,
@@ -42,6 +45,8 @@ type DoctorCheck = { name: string; ok: boolean; detail?: string };
 
 type CliJsonOutput =
   | ServerInfo
+  | AgentClaimResponse
+  | AgentNoteResponse
   | ReviewEvent
   | ResolveResult
   | StopServerResult
@@ -165,7 +170,8 @@ program
           if (options.open !== false) {
             await openBrowser(url);
           }
-        }
+        },
+        { turnId: turn.id }
       );
       info = watched.info;
       client = new ServerClient(serverUrl(info));
@@ -319,6 +325,42 @@ program
   );
 
 program
+  .command('claim')
+  .argument('<reviewId>', 'review id')
+  .description('Claim the latest submitted unresolved review turn for agent work')
+  .option('--message <text>', 'optional visible agent status message')
+  .option('--turn <idOrIndex>', 'claim a specific submitted turn')
+  .action(async (reviewId: string, options: { message?: string; turn?: string }) => {
+    const globals = program.opts<GlobalOptions>();
+    const info = await ensureServer();
+    const client = new ServerClient(serverUrl(info));
+    const result = await client.claimReview(reviewId, options.message, options.turn);
+    globals.json
+      ? printJson(result)
+      : printPlain(`Claimed review ${reviewId} turn ${result.turnIndex}`);
+  });
+
+program
+  .command('note')
+  .argument('<reviewId>', 'review id')
+  .description('Post a visible agent progress note to a review')
+  .requiredOption('--message <text>', 'agent note text')
+  .option('--status <status>', 'agent status: claimed, working, blocked, completed, or failed')
+  .option('--turn <idOrIndex>', 'attach the note to a specific turn')
+  .action(
+    async (reviewId: string, options: { message: string; status?: AgentStatus; turn?: string }) => {
+      const globals = program.opts<GlobalOptions>();
+      const status = parseAgentStatus(options.status);
+      const info = await ensureServer();
+      const client = new ServerClient(serverUrl(info));
+      const result = await client.addAgentNote(reviewId, options.message, status, options.turn);
+      globals.json
+        ? printJson(result)
+        : printPlain(`Added note to review ${reviewId}${status ? ` (${status})` : ''}`);
+    }
+  );
+
+program
   .command('doctor')
   .description('Diagnose setup and validate git/state')
   .action(async () => {
@@ -395,7 +437,8 @@ async function watchReviewWithReconnect(
   reviewId: string,
   initialInfo: ServerInfo,
   timeoutSeconds: number | undefined,
-  onServerChanged: (info: ServerInfo) => Promise<void>
+  onServerChanged: (info: ServerInfo) => Promise<void>,
+  options: { turnId?: string } = {}
 ): Promise<{ event: ReviewEvent; info: ServerInfo }> {
   const startedAt = Date.now();
   let info = initialInfo;
@@ -410,7 +453,10 @@ async function watchReviewWithReconnect(
     }
 
     try {
-      const event = await new ServerClient(serverUrl(info)).watchReview(reviewId, remainingSeconds);
+      const event = await new ServerClient(serverUrl(info)).watchReview(reviewId, {
+        timeoutSeconds: remainingSeconds,
+        turnId: options.turnId
+      });
       return { event, info };
     } catch (error) {
       if (isWatchTimeout(error)) {
@@ -506,6 +552,22 @@ function parseOlderThanDays(value: string): number {
     throw new Error('--older-than must be a non-negative integer');
   }
   return days;
+}
+
+function parseAgentStatus(value: string | undefined): AgentStatus | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    value === 'claimed' ||
+    value === 'working' ||
+    value === 'blocked' ||
+    value === 'completed' ||
+    value === 'failed'
+  ) {
+    return value;
+  }
+  throw new Error('--status must be one of claimed, working, blocked, completed, or failed');
 }
 
 function formatClearResult(result: ClearReviewsResult): string {

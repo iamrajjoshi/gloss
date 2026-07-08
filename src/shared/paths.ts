@@ -4,6 +4,7 @@ import path from 'node:path';
 import packageJson from '../../package.json';
 
 export const packageVersion = packageJson.version;
+export const protocolVersion = 1;
 
 export function expandHome(input: string): string {
   if (input === '~') {
@@ -21,6 +22,10 @@ export function globalStateDir(): string {
 
 export function globalServerFile(): string {
   return path.join(globalStateDir(), 'server.json');
+}
+
+export function globalLastPortFile(): string {
+  return path.join(globalStateDir(), 'last-port');
 }
 
 export function globalServerLockDir(): string {
@@ -89,6 +94,10 @@ export function globalReviewMarkdownFile(reviewId: string): string {
 
 export function globalReviewResolvedFile(reviewId: string): string {
   return path.join(globalReviewDir(reviewId), 'resolved.json');
+}
+
+export function globalReviewEventsFile(reviewId: string): string {
+  return path.join(globalReviewDir(reviewId), 'events.jsonl');
 }
 
 export async function ensureDir(dir: string): Promise<void> {

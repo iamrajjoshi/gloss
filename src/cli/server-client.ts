@@ -1,5 +1,9 @@
 import type { JsonValue } from '../shared/json';
 import type {
+  AgentClaimRequest,
+  AgentClaimResponse,
+  AgentNoteRequest,
+  AgentNoteResponse,
   ClearReviewsRequest,
   ClearReviewsResult,
   Comment,
@@ -17,6 +21,8 @@ import type {
   SubmitReviewRequest
 } from '../shared/types';
 import {
+  isAgentClaimResponse,
+  isAgentNoteResponse,
   isClearReviewsResult,
   isCreateReviewResponse,
   isCreateReviewTurnResponse,
@@ -33,6 +39,11 @@ import {
 } from '../shared/validation';
 
 const timedWatchAttemptMs = 1000;
+
+interface WatchReviewOptions {
+  timeoutSeconds?: number;
+  turnId?: string;
+}
 
 export class ServerClient {
   constructor(private readonly baseUrl: string) {}
@@ -85,6 +96,35 @@ export class ServerClient {
     );
   }
 
+  async claimReview(
+    reviewId: string,
+    message?: string,
+    turn?: string
+  ): Promise<AgentClaimResponse> {
+    const request: AgentClaimRequest = { message, turn };
+    return this.post(
+      `/api/reviews/${reviewId}/agent/claim`,
+      request,
+      isAgentClaimResponse,
+      'agent claim response'
+    );
+  }
+
+  async addAgentNote(
+    reviewId: string,
+    message: string,
+    status?: AgentNoteRequest['status'],
+    turn?: string
+  ): Promise<AgentNoteResponse> {
+    const request: AgentNoteRequest = { message, status, turn };
+    return this.post(
+      `/api/reviews/${reviewId}/agent/notes`,
+      request,
+      isAgentNoteResponse,
+      'agent note response'
+    );
+  }
+
   async resolveComment(
     reviewId: string,
     commentId: string,
@@ -117,7 +157,8 @@ export class ServerClient {
     );
   }
 
-  async watchReview(reviewId: string, timeoutSeconds?: number): Promise<ReviewEvent> {
+  async watchReview(reviewId: string, options: WatchReviewOptions = {}): Promise<ReviewEvent> {
+    const { timeoutSeconds, turnId } = options;
     const deadline =
       timeoutSeconds && timeoutSeconds > 0 ? Date.now() + timeoutSeconds * 1000 : null;
 
@@ -131,7 +172,7 @@ export class ServerClient {
       const timeoutMs = remainingMs === null ? null : Math.min(remainingMs, timedWatchAttemptMs);
       const timeout = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
       try {
-        return await this.readReviewEvents(reviewId, controller.signal);
+        return await this.readReviewEvents(reviewId, controller.signal, turnId);
       } catch (error) {
         if (isAbortError(error)) {
           if (deadline && Date.now() < deadline) {
@@ -151,7 +192,11 @@ export class ServerClient {
     }
   }
 
-  private async readReviewEvents(reviewId: string, signal: AbortSignal): Promise<ReviewEvent> {
+  private async readReviewEvents(
+    reviewId: string,
+    signal: AbortSignal,
+    turnId?: string
+  ): Promise<ReviewEvent> {
     const response = await fetch(`${this.baseUrl}/api/reviews/${reviewId}/events`, {
       signal
     });
@@ -177,7 +222,11 @@ export class ServerClient {
           continue;
         }
         const event = parseJson(dataLine.slice(5).trim(), isReviewEvent, 'review event');
-        if (event.type === 'review.submitted' || event.type === 'review.cancelled') {
+        if (event.type === 'review.cancelled') {
+          await reader.cancel().catch(() => undefined);
+          return event;
+        }
+        if (event.type === 'review.submitted' && (!turnId || event.turnId === turnId)) {
           await reader.cancel().catch(() => undefined);
           return event;
         }
@@ -192,7 +241,13 @@ export class ServerClient {
 
   private async post<T>(
     path: string,
-    body: ClearReviewsRequest | DiffPayload | ResolutionRequest | SubmitReviewRequest,
+    body:
+      | AgentClaimRequest
+      | AgentNoteRequest
+      | ClearReviewsRequest
+      | DiffPayload
+      | ResolutionRequest
+      | SubmitReviewRequest,
     guard: JsonGuard<T>,
     label: string
   ): Promise<T> {

@@ -56,13 +56,16 @@ The skill pairs the CLI with the browser app:
 3. Read `feedbackPath` from the JSON output.
 4. Check `feedback.reviewScope`; scoped feedback means the human submitted while
    viewing one commit or commit range, not necessarily the whole turn.
-5. Address general comments first, then file comments in file and line order.
-6. Validate the fix with the narrowest relevant checks.
-7. Optionally mark individual comments handled with
+5. Run `gloss claim <reviewId> --json` so the browser shows agent work started.
+6. Address general comments first, then file comments in file and line order.
+7. Optionally post progress with
+   `gloss note <reviewId> --status working --message "<short status>"`.
+8. Validate the fix with the narrowest relevant checks.
+9. Optionally mark individual comments handled with
    `gloss resolve <reviewId> --comment <commentId> --summary "<what changed>"`.
-8. Run `gloss resolve <reviewId> --summary "<what changed>"`, then summarize
+10. Run `gloss resolve <reviewId> --summary "<what changed>"`, then summarize
    what changed.
-9. For another pass on the same review, run
+11. For another pass on the same review, run
    `gloss open --review <reviewId> --json`.
 
 Browser review shortcuts:
@@ -178,6 +181,13 @@ Continue an existing review with another turn:
 
 ```bash
 gloss open --review <reviewId> --json
+```
+
+Claim submitted feedback before editing, and post visible progress when useful:
+
+```bash
+gloss claim <reviewId> --json
+gloss note <reviewId> --status working --message "Applying feedback"
 ```
 
 `gloss open --json` intentionally waits until browser submission or timeout.
