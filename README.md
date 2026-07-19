@@ -201,5 +201,7 @@ Releases follow Willow's tag-driven shape:
 
 Required repository secrets:
 
-- `NPM_TOKEN`
 - `HOMEBREW_TAP_GITHUB_TOKEN`
+
+npm publishing uses a trusted publisher for `iamrajjoshi/gloss` and
+`.github/workflows/release.yml`.
