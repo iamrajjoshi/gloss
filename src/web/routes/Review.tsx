@@ -218,12 +218,7 @@ function scrollToFile(filePath: string) {
   if (!target) {
     return;
   }
-  const headerOffset = 156;
-  const targetTop = target.getBoundingClientRect().top + window.scrollY - headerOffset;
-  window.scrollTo({
-    behavior: 'smooth',
-    top: Math.max(targetTop, 0)
-  });
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function scrollToLineComment(comment: LineComment): boolean {
@@ -296,6 +291,8 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
   >('connecting');
   const sourcePeekRequestId = useRef(0);
   const lastEventSeq = useRef(0);
+  const reviewShellRef = useRef<HTMLElement>(null);
+  const topbarRef = useRef<HTMLElement>(null);
   const reset = useReviewStore((state) => state.reset);
   const hydrateReview = useReviewStore((state) => state.hydrateReview);
   const setDraft = useReviewStore((state) => state.setDraft);
@@ -381,6 +378,9 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
         ? reviewSessionState(timelineEvents, displayRecord)
         : EMPTY_REVIEW_SESSION_STATE,
     [timelineEvents, displayRecord]
+  );
+  const reviewReady = Boolean(
+    !error && record && selectedTurn && displayRecord && activeDiff && displayTitle
   );
 
   const applyRecord = useCallback((nextRecord: ReviewRecord) => {
@@ -500,6 +500,25 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
       cancelled = true;
     };
   }, [effectiveCommitView, selectedTurn, reviewId]);
+
+  useEffect(() => {
+    if (!reviewReady) {
+      return;
+    }
+    const reviewShell = reviewShellRef.current;
+    const topbar = topbarRef.current;
+    if (!reviewShell || !topbar) {
+      return;
+    }
+
+    const updateStickyTop = () => {
+      reviewShell.style.setProperty('--review-sticky-top', `${topbar.offsetHeight}px`);
+    };
+    updateStickyTop();
+    const observer = new ResizeObserver(updateStickyTop);
+    observer.observe(topbar);
+    return () => observer.disconnect();
+  }, [reviewReady]);
 
   useEffect(() => {
     const events = new EventSource(`/api/reviews/${reviewId}/events?after=${lastEventSeq.current}`);
@@ -798,10 +817,10 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     );
 
   return (
-    <main className="review-shell">
+    <main className="review-shell" ref={reviewShellRef}>
       <div className="review-split">
         <div className="review-main-pane">
-          <header className="topbar">
+          <header className="topbar" ref={topbarRef}>
             <div className="topbar-header">
               <div className="topbar-title">
                 <img className="brand-mark" src="/logo.svg" alt="" />

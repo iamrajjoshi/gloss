@@ -2109,11 +2109,12 @@ pre {
 }
 
 .file-card {
-  overflow: hidden;
+  min-width: 0;
+  overflow: clip;
   border: 1px solid var(--ide-border);
   border-radius: var(--radius-cards);
   background: var(--ide-bg);
-  scroll-margin-top: 140px;
+  scroll-margin-top: calc(var(--review-sticky-top) + var(--spacing-16));
 }
 
 .file-card.active {
@@ -2123,7 +2124,9 @@ pre {
 
 .file-header {
   display: grid;
-  position: relative;
+  position: sticky;
+  top: var(--review-sticky-top);
+  z-index: 4;
   grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   width: 100%;
   align-items: center;
@@ -4580,7 +4583,15 @@ pre {
   }
 
   .file-header {
-    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+  }
+
+  .file-header-toggle {
+    grid-column: 1 / -1;
+  }
+
+  .viewed-toggle {
+    justify-self: end;
   }
 
   .rename-path {
