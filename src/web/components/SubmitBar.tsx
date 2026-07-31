@@ -1,4 +1,4 @@
-import { Check, MessageSquare, Plus, Send, Trash2, X } from 'lucide-react';
+import { Check, MessageSquare, Pencil, Plus, Send, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { formatLineRange, isLineComment } from '../../shared/comments';
@@ -22,11 +22,14 @@ export function SubmitBar({
   const comments = useReviewStore((state) => state.comments);
   const addGeneralComment = useReviewStore((state) => state.addGeneralComment);
   const removeComment = useReviewStore((state) => state.removeComment);
+  const updateComment = useReviewStore((state) => state.updateComment);
   const [generalCommentBody, setGeneralCommentBody] = useState('');
   const [selectedGeneralCommentId, setSelectedGeneralCommentId] = useState<string | null>(null);
+  const [editingGeneralCommentBody, setEditingGeneralCommentBody] = useState<string | null>(null);
   const [state, setState] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const generalDialogRef = useRef<HTMLDialogElement | null>(null);
+  const generalCommentEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const submittingRef = useRef(false);
   const canSubmit = state !== 'submitting' && state !== 'done';
   const trimmedGeneralCommentBody = generalCommentBody.trim();
@@ -38,14 +41,25 @@ export function SubmitBar({
     selectedGeneralCommentId === null
       ? null
       : (generalComments.find((comment) => comment.id === selectedGeneralCommentId) ?? null);
+  const isEditingGeneralComment = editingGeneralCommentBody !== null;
   const hasLineComments = lineComments.length > 0;
-  const closeGeneralCommentDialog = useCallback(() => setSelectedGeneralCommentId(null), []);
+  const closeGeneralCommentDialog = useCallback(() => {
+    setSelectedGeneralCommentId(null);
+    setEditingGeneralCommentBody(null);
+  }, []);
   const submitGeneralComment = () => {
     if (!trimmedGeneralCommentBody) {
       return;
     }
     addGeneralComment(trimmedGeneralCommentBody);
     setGeneralCommentBody('');
+  };
+  const saveGeneralComment = () => {
+    if (!selectedGeneralComment || !editingGeneralCommentBody?.trim()) {
+      return;
+    }
+    updateComment(selectedGeneralComment.id, editingGeneralCommentBody);
+    setEditingGeneralCommentBody(null);
   };
   const submit = useCallback(async () => {
     if (!canSubmit || submittingRef.current) {
@@ -94,13 +108,21 @@ export function SubmitBar({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        closeGeneralCommentDialog();
+        if (isEditingGeneralComment) {
+          setEditingGeneralCommentBody(null);
+        } else {
+          closeGeneralCommentDialog();
+        }
       }
     };
-    generalDialogRef.current?.focus();
+    if (isEditingGeneralComment) {
+      generalCommentEditorRef.current?.focus();
+    } else {
+      generalDialogRef.current?.focus();
+    }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [closeGeneralCommentDialog, selectedGeneralComment]);
+  }, [closeGeneralCommentDialog, isEditingGeneralComment, selectedGeneralComment]);
 
   return (
     <>
@@ -250,7 +272,11 @@ export function SubmitBar({
                 tabIndex={-1}
               >
                 <header className="general-feedback-dialog-header">
-                  <h2 id="general-feedback-dialog-title">General feedback</h2>
+                  <h2 id="general-feedback-dialog-title">
+                    {editingGeneralCommentBody === null
+                      ? 'General feedback'
+                      : 'Edit general feedback'}
+                  </h2>
                   <button
                     aria-label="Close general feedback"
                     className="icon-button general-feedback-dialog-close"
@@ -261,27 +287,74 @@ export function SubmitBar({
                   </button>
                 </header>
                 <div className="general-feedback-dialog-body">
-                  <p className="general-feedback-dialog-text">{selectedGeneralComment.body}</p>
+                  {editingGeneralCommentBody === null ? (
+                    <p className="general-feedback-dialog-text">{selectedGeneralComment.body}</p>
+                  ) : (
+                    <textarea
+                      aria-label="Edit general feedback"
+                      className="general-feedback-dialog-editor"
+                      ref={generalCommentEditorRef}
+                      value={editingGeneralCommentBody}
+                      onChange={(event) => setEditingGeneralCommentBody(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (isSubmitCommentShortcut(event)) {
+                          event.preventDefault();
+                          saveGeneralComment();
+                        }
+                      }}
+                    />
+                  )}
                 </div>
                 <footer className="general-feedback-dialog-footer">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => {
-                      removeComment(selectedGeneralComment.id);
-                      closeGeneralCommentDialog();
-                    }}
-                  >
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={closeGeneralCommentDialog}
-                  >
-                    Close
-                  </button>
+                  {editingGeneralCommentBody === null ? (
+                    <>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          removeComment(selectedGeneralComment.id);
+                          closeGeneralCommentDialog();
+                        }}
+                      >
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => setEditingGeneralCommentBody(selectedGeneralComment.body)}
+                      >
+                        <Pencil size={14} />
+                        Edit
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={closeGeneralCommentDialog}
+                      >
+                        Close
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => setEditingGeneralCommentBody(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={editingGeneralCommentBody.trim().length === 0}
+                        onClick={saveGeneralComment}
+                      >
+                        <Check size={14} />
+                        Save
+                      </button>
+                    </>
+                  )}
                 </footer>
               </dialog>
             </div>,

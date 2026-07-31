@@ -127,7 +127,11 @@ describe('diff context helpers', () => {
       throw new Error('Expected hidden segment');
     }
 
-    expect(contextExpansionDirectionsForSegment(gap, fullMiddleSegment)).toEqual(['up', 'down']);
+    expect(contextExpansionDirectionsForSegment(gap, fullMiddleSegment)).toEqual([
+      'up',
+      'all',
+      'down'
+    ]);
 
     const withTop = mergeContextLines(gap, undefined, contextLines(5, 3));
     const bottomSegment = expandedContextSegments(gap, withTop)[1];
@@ -135,7 +139,7 @@ describe('diff context helpers', () => {
       throw new Error('Expected hidden segment below revealed context');
     }
 
-    expect(contextExpansionDirectionsForSegment(gap, bottomSegment)).toEqual(['up', 'down']);
+    expect(contextExpansionDirectionsForSegment(gap, bottomSegment)).toEqual(['up', 'all', 'down']);
 
     const topGap = buildContextGaps(file)[0];
     const fullTopSegment = expandedContextSegments(topGap, undefined)[0];
@@ -144,6 +148,39 @@ describe('diff context helpers', () => {
     }
 
     expect(contextExpansionDirectionsForSegment(topGap, fullTopSegment)).toEqual(['up']);
+  });
+
+  it('reveals ten lines for a directional expansion and the full remainder for expand all', () => {
+    const firstHunk = file.hunks[0];
+    if (!firstHunk) {
+      throw new Error('Expected first hunk');
+    }
+    const largeInterHunkFile: DiffFile = {
+      ...file,
+      hunks: [
+        firstHunk,
+        {
+          oldStart: 80,
+          oldLines: 1,
+          newStart: 80,
+          newLines: 1,
+          header: '',
+          lines: [{ type: 'context', oldLine: 80, newLine: 80, content: 'line 80' }]
+        }
+      ]
+    };
+    const gap = buildContextGaps(largeInterHunkFile)[1];
+
+    expect(contextExpansionRequest(gap, undefined, 'down')).toEqual({
+      oldStart: 5,
+      newStart: 5,
+      lineCount: 10
+    });
+    expect(contextExpansionRequest(gap, undefined, 'all')).toEqual({
+      oldStart: 5,
+      newStart: 5,
+      lineCount: 75
+    });
   });
 
   it('builds directional requests from the remaining hidden window', () => {

@@ -19,6 +19,7 @@ interface ReviewState {
   hydrateReview: (comments: Comment[], resolution?: ResolutionBundle | null) => void;
   addComment: (body: string) => void;
   addGeneralComment: (body: string) => void;
+  updateComment: (id: string, body: string) => void;
   removeComment: (id: string) => void;
   reset: () => void;
 }
@@ -68,6 +69,17 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
           createdAt: new Date().toISOString()
         }
       ]
+    }));
+  },
+  updateComment: (id, body) => {
+    const trimmed = body.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    set((state) => ({
+      comments: state.comments.map((comment) =>
+        comment.id === id ? { ...comment, body: trimmed } : comment
+      )
     }));
   },
   removeComment: (id) =>
