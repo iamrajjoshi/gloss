@@ -5,7 +5,7 @@ import {
   type DiffLine
 } from '../../shared/types';
 
-const CONTEXT_EXPAND_CHUNK_SIZE = 20;
+const CONTEXT_EXPAND_CHUNK_SIZE = 10;
 
 export type ContextExpansionDirection = 'up' | 'down' | 'all';
 
@@ -70,7 +70,7 @@ export function contextExpansionDirectionsForSegment(
   const startOffset = segment.oldStart - gap.oldStart;
   const canExpandFromTopEdge = startOffset > 0 || gap.beforeHunkIndex > 0;
 
-  return canExpandFromTopEdge ? ['up', 'down'] : ['up'];
+  return canExpandFromTopEdge ? ['up', 'all', 'down'] : ['up', 'all'];
 }
 
 export function buildContextGaps(file: DiffFile): DiffContextGap[] {

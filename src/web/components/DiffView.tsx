@@ -1,10 +1,14 @@
 import {
+  Check,
   CheckCircle2,
   ChevronDown,
+  ChevronsDown,
+  ChevronsUp,
   ChevronsUpDown,
   ChevronUp,
   LoaderCircle,
   MessageSquare,
+  Pencil,
   Plus
 } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
@@ -23,6 +27,7 @@ import type {
   Side
 } from '../../shared/types';
 import { fetchDiffContext } from '../api';
+import { isSubmitCommentShortcut } from '../shortcuts';
 import { useReviewStore } from '../store';
 import type { HighlightedDiffLines, SyntaxToken } from '../syntax';
 import { useTheme } from '../theme';
@@ -306,9 +311,11 @@ function DiffFileTable({
   const resolution = useReviewStore((state) => state.resolution);
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
+  const updateComment = useReviewStore((state) => state.updateComment);
   const { resolvedTheme } = useTheme();
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
+  const [editingComment, setEditingComment] = useState<{ id: string; body: string } | null>(null);
   const [highlightedFile, setHighlightedFile] = useState<{
     file: DiffFile;
     lines: HighlightedDiffLines | null;
@@ -317,6 +324,7 @@ function DiffFileTable({
   const [contextByGap, setContextByGap] = useState<DiffContextStateByGap>({});
   const selectionRef = useRef<SelectionRef | null>(null);
   const cleanupSelectionListeners = useRef<(() => void) | null>(null);
+  const editCommentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const contextGaps = useMemo(() => buildContextGaps(file), [file]);
   const contextGapByHunkIndex = useMemo(
     () => new Map(contextGaps.map((gap) => [gap.beforeHunkIndex, gap])),
@@ -340,6 +348,7 @@ function DiffFileTable({
   const fileComments = comments.filter(
     (comment): comment is LineComment => isLineComment(comment) && comment.filePath === file.path
   );
+  const editingCommentId = editingComment?.id ?? null;
   const dragVisualRange =
     dragStart && dragEnd && dragStart.filePath === file.path && dragStart.side === dragEnd.side
       ? visualRangeFor(visualIndexByLine, dragStart.side, dragStart.line, dragEnd.line)
@@ -363,8 +372,20 @@ function DiffFileTable({
       originalSnippet: snippet
     });
   };
+  const saveEditedComment = () => {
+    if (!editingComment || editingComment.body.trim().length === 0) {
+      return;
+    }
+    updateComment(editingComment.id, editingComment.body);
+    setEditingComment(null);
+  };
 
   useEffect(() => () => cleanupSelectionListeners.current?.(), []);
+  useEffect(() => {
+    if (editingCommentId) {
+      editCommentTextareaRef.current?.focus({ preventScroll: true });
+    }
+  }, [editingCommentId]);
 
   const rowFromElement = (element: HTMLElement): RowRef | null => {
     if (element.dataset.filePath !== file.path) {
@@ -620,24 +641,81 @@ function DiffFileTable({
         </div>
         {rowComments.map((comment) => {
           const resolvedComment = resolvedByCommentId.get(comment.id);
+          const isEditing = editingComment?.id === comment.id;
           return (
             <div
-              className={`inline-comment ${resolvedComment ? 'resolved' : 'open'}`}
+              className={`inline-comment ${resolvedComment ? 'resolved' : 'open'} ${isEditing ? 'editing' : ''}`}
               data-comment-id={comment.id}
               key={comment.id}
             >
               {resolvedComment ? <CheckCircle2 size={14} /> : <MessageSquare size={14} />}
-              <span className="inline-comment-content">
+              <div className="inline-comment-content">
                 {readOnly ? (
                   <span className="inline-comment-status">
                     {resolvedComment ? 'Resolved' : 'Open · Needs fix'}
                   </span>
                 ) : null}
-                <span className="inline-comment-body">{comment.body}</span>
+                {isEditing ? (
+                  <form
+                    className="inline-comment-edit-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      saveEditedComment();
+                    }}
+                  >
+                    <textarea
+                      aria-label="Edit comment"
+                      ref={editCommentTextareaRef}
+                      value={editingComment.body}
+                      onChange={(event) =>
+                        setEditingComment({ id: comment.id, body: event.target.value })
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setEditingComment(null);
+                        } else if (isSubmitCommentShortcut(event)) {
+                          event.preventDefault();
+                          saveEditedComment();
+                        }
+                      }}
+                    />
+                    <div className="inline-comment-edit-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => setEditingComment(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="submit"
+                        disabled={editingComment.body.trim().length === 0}
+                      >
+                        <Check size={14} />
+                        Save
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <span className="inline-comment-body">{comment.body}</span>
+                )}
                 {resolvedComment?.summary ? (
                   <span className="inline-comment-summary">{resolvedComment.summary}</span>
                 ) : null}
-              </span>
+              </div>
+              {!readOnly && !isEditing ? (
+                <button
+                  aria-label="Edit comment"
+                  className="inline-comment-edit-button"
+                  title="Edit comment"
+                  type="button"
+                  onClick={() => setEditingComment({ id: comment.id, body: comment.body })}
+                >
+                  <Pencil size={13} />
+                </button>
+              ) : null}
             </div>
           );
         })}
@@ -734,7 +812,7 @@ function HiddenLinesControl({
                 type="button"
                 onClick={() => onExpand(direction)}
               >
-                <HiddenContextIcon direction={direction} />
+                <HiddenContextIcon direction={direction} directions={directions} />
               </button>
             );
           })}
@@ -752,15 +830,27 @@ function hiddenContextLabel(direction: ContextExpansionDirection): string {
   if (direction === 'down') {
     return 'Expand hidden context downward';
   }
-  return 'Expand hidden context';
+  return 'Expand more hidden context';
 }
 
-function HiddenContextIcon({ direction }: { direction: ContextExpansionDirection }) {
+function HiddenContextIcon({
+  direction,
+  directions
+}: {
+  direction: ContextExpansionDirection;
+  directions: ContextExpansionDirection[];
+}) {
   if (direction === 'up') {
     return <ChevronUp size={15} />;
   }
   if (direction === 'down') {
     return <ChevronDown size={15} />;
+  }
+  if (directions.length === 2 && directions[0] === 'up') {
+    return <ChevronsUp size={15} />;
+  }
+  if (directions.length === 2 && directions[0] === 'down') {
+    return <ChevronsDown size={15} />;
   }
   return <ChevronsUpDown size={15} />;
 }

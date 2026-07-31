@@ -68,4 +68,27 @@ describe('useReviewStore', () => {
       }
     ]);
   });
+
+  it('updates a saved comment body without changing its metadata', () => {
+    const comment = makeComment();
+    useReviewStore.getState().hydrateComments([comment]);
+
+    useReviewStore.getState().updateComment(comment.id, '  Explain why this is safe.  ');
+
+    expect(useReviewStore.getState().comments).toEqual([
+      {
+        ...comment,
+        body: 'Explain why this is safe.'
+      }
+    ]);
+  });
+
+  it('does not replace a saved comment with an empty body', () => {
+    const comment = makeComment();
+    useReviewStore.getState().hydrateComments([comment]);
+
+    useReviewStore.getState().updateComment(comment.id, '   ');
+
+    expect(useReviewStore.getState().comments).toEqual([comment]);
+  });
 });

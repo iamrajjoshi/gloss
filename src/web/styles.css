@@ -2719,6 +2719,7 @@ pre {
 
 .inline-comment-content {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   gap: 4px;
 }
@@ -2740,6 +2741,71 @@ pre {
   color: var(--ide-fg-muted);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.inline-comment-edit-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin: -4px -4px -4px auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-buttons);
+  background: transparent;
+  color: var(--ide-fg-muted);
+  cursor: pointer;
+}
+
+.inline-comment-edit-button:hover,
+.inline-comment-edit-button:focus-visible {
+  background: var(--ide-hover-background);
+  color: var(--ide-fg);
+}
+
+.inline-comment-edit-form {
+  display: grid;
+  gap: var(--spacing-8);
+}
+
+.inline-comment-edit-form textarea,
+.general-feedback-dialog-editor {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--ide-border);
+  border-radius: var(--radius-buttons);
+  background: var(--ide-bg);
+  color: var(--ide-fg);
+  font-family: var(--font-mono);
+  line-height: 1.45;
+  outline: none;
+}
+
+.inline-comment-edit-form textarea {
+  min-height: 72px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.inline-comment-edit-form textarea:focus,
+.general-feedback-dialog-editor:focus {
+  border-color: var(--ide-accent-border);
+  box-shadow: 0 0 0 2px var(--ide-accent-muted);
+}
+
+.inline-comment-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-8);
+}
+
+.inline-comment-edit-actions .primary-button,
+.inline-comment-edit-actions .secondary-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .draft-comment-shell {
@@ -3252,6 +3318,12 @@ pre {
   font-size: var(--text-small);
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.general-feedback-dialog-editor {
+  min-height: 180px;
+  padding: 12px;
+  font-size: var(--text-small);
 }
 
 .general-feedback-dialog-footer {
