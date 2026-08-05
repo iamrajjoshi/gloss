@@ -75,7 +75,7 @@ curl -fsSL https://getgloss.dev/install.sh | sh
 ## Commands
 
 ```text
-gloss open [--base <ref>] [--review <reviewId>] [--print-url] [--no-open] [--json] [--no-watch] [--timeout <s>]
+gloss open [--base <ref>] [--review <reviewId>] [--print-url] [--no-open] [--json] [--no-watch] [--timeout <s>] [--tui|--fullscreen]
 gloss watch <reviewId>
 gloss resolve <reviewId> [--comment <commentId>] [--turn <id-or-index>] [--summary <text>] [--json]
 gloss start [--port <port>]
@@ -99,6 +99,9 @@ compares only against the requested ref and does not switch to a branch diff.
 `--no-watch` when a caller only needs to open the review and return immediately.
 Use `gloss open --review <reviewId> --json` after applying feedback to capture
 the next diff as another turn in the same browser review.
+Use `gloss open --tui` or `gloss open --fullscreen` for the opt-in terminal
+review UI. Terminal review runs in the alternate screen, keeps the browser
+closed, and submits through the same feedback files as browser review.
 The background server exits automatically after a short idle window with no
 live review clients. Pending review artifacts stay on disk and can be resumed,
 but they do not keep the daemon alive by themselves. `gloss doctor` reports
@@ -126,6 +129,12 @@ comment. Add review-level general comments from the submit bar when the feedback
 is not tied to one line. Use `Command+Enter` to save the active draft comment.
 Use `Command+Shift+Enter` to submit the review; this matches the Submit button
 and includes already-saved comments only.
+
+In terminal review, use `j/k`, arrows, `PgUp/PgDn`, `Home`, and `End` to move
+through the diff. Press `c` for an inline comment, `g` for general feedback,
+`Ctrl+D` to save a multiline comment, `u` to undo the last unsent comment, `s`
+to submit, and `q` to leave the review pending. In xterm-compatible terminals,
+the mouse wheel scrolls and click-drag copies visible text to the clipboard.
 
 Lockfiles are hidden by default in the browser review and stay one click away in
 the hidden-files banner. Use the file filter menu to also hide boring files such

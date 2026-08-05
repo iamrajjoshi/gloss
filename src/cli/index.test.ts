@@ -157,12 +157,16 @@ async function agePersistedTurn(reviewId: string, turnId: string): Promise<void>
   );
 }
 
-function runCliInRepo(args: string[], options: { reject?: boolean } = {}) {
+function runCliInRepo(
+  args: string[],
+  options: { env?: Record<string, string>; reject?: boolean } = {}
+) {
   return execa(process.execPath, ['--import', tsxLoaderPath(), cliPath(), ...args], {
     cwd: repoRoot,
     reject: options.reject,
     env: {
       ...process.env,
+      ...options.env,
       GLOSS_STATE_DIR: process.env.GLOSS_STATE_DIR
     }
   });
@@ -408,6 +412,89 @@ describe('gloss clear', () => {
 });
 
 describe('gloss open', () => {
+  it('rejects terminal review without a TTY before touching git', async () => {
+    const result = await runCliInRepo(['open', '--tui'], { reject: false });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('requires an interactive terminal');
+  });
+
+  it('rejects terminal review with --no-watch before registering a review', async () => {
+    const { app } = await startServerFixture();
+
+    const result = await runCliInRepo(['open', '--tui', '--no-watch'], {
+      env: { GLOSS_TUI_TEST_EXIT: 'quit' },
+      reject: false
+    });
+    const listResponse = await app.request('/api/reviews');
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('cannot be combined with --no-watch');
+    expect(list.reviews).toEqual([]);
+  });
+
+  it('treats --fullscreen as a terminal review alias', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const result = await runCliInRepo(['open', '--fullscreen', '--json'], {
+      env: { GLOSS_TUI_TEST_EXIT: 'quit' },
+      reject: false
+    });
+    const output = JSON.parse(result.stdout);
+    const listResponse = await app.request('/api/reviews');
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
+
+    expect(result.exitCode).toBe(2);
+    expect(output).toMatchObject({
+      submitted: false,
+      reviewId: list.reviews[0]?.id,
+      files: 1,
+      scope: 'working'
+    });
+    expect(list.reviews[0]?.status).toBe('pending');
+  });
+
+  it('submits terminal review feedback through the existing JSON contract', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const result = await runCliInRepo(['open', '--tui', '--json'], {
+      env: { GLOSS_TUI_TEST_EXIT: 'submit' }
+    });
+    const output = parseJson(result.stdout, isOpenResult, 'terminal open output');
+    const reviewResponse = await app.request(`/api/reviews/${output.reviewId}`);
+    const review = await responseJson(reviewResponse, isReviewRecord, 'review response');
+
+    expect(output).toMatchObject({
+      files: 0,
+      comments: 0,
+      artifactDir: expect.any(String),
+      feedbackPath: expect.any(String),
+      markdownPath: expect.any(String)
+    });
+    expect(review.meta.status).toBe('submitted');
+    expect(review.feedback?.comments).toEqual([]);
+  });
+
+  it('does not require --no-open in terminal review mode', async () => {
+    await initializeGitRepoWithChange();
+    const { app } = await startServerFixture();
+
+    const result = await runCliInRepo(['open', '--tui', '--json'], {
+      env: { GLOSS_TUI_TEST_EXIT: 'quit' },
+      reject: false
+    });
+    const output = JSON.parse(result.stdout);
+    const listResponse = await app.request('/api/reviews');
+    const list = await responseJson(listResponse, isListReviewsResponse, 'review list response');
+
+    expect(result.exitCode).toBe(2);
+    expect(output.submitted).toBe(false);
+    expect(output.reviewId).toBe(list.reviews[0]?.id);
+  });
+
   it('leaves the review pending when watch times out', async () => {
     await initializeGitRepoWithChange();
     const { app } = await startServerFixture();

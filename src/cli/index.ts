@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import openBrowser from 'open';
 import { clearReviewArtifacts, DEFAULT_REVIEW_RETENTION_DAYS } from '../shared/cleanup';
+import { countCommentFiles } from '../shared/comments';
 import { formatError, isFileNotFound } from '../shared/errors';
 import { ensureDir, globalServerFile, globalStateDir, packageVersion } from '../shared/paths';
 import { serverInfoPermissionMessage } from '../shared/server-info';
@@ -16,6 +17,7 @@ import type {
   ResolveResult,
   ReviewEvent,
   ReviewMeta,
+  ReviewTurnSummary,
   ServerInfo
 } from '../shared/types';
 import { assertGitAvailable, captureDiff, getRepoRoot } from './git';
@@ -32,6 +34,8 @@ import {
 } from './lifecycle';
 import { ServerClient } from './server-client';
 import { listReviewsForStatus } from './status';
+import { runTerminalReview, type TerminalReviewExit, type TerminalReviewModel } from './tui';
+import { buildTuiRows } from './tui/row-model';
 
 interface GlobalOptions {
   json?: boolean;
@@ -40,35 +44,65 @@ interface GlobalOptions {
 
 type DoctorCheck = { name: string; ok: boolean; detail?: string };
 
+interface PendingOpenJson {
+  reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
+  url: string;
+  files: number;
+  scope: DiffPayload['scope']['mode'];
+  artifactDir: string;
+  reused?: boolean;
+}
+
+interface SubmittedOpenJson {
+  reviewId: string;
+  turnId?: string;
+  turnIndex?: number;
+  url: string;
+  files: number;
+  comments: number;
+  feedbackPath: string;
+  markdownPath: string;
+  artifactDir: string;
+  feedback: FeedbackBundle;
+  reused?: boolean;
+}
+
+interface PendingTerminalOpenJson extends PendingOpenJson {
+  submitted: false;
+}
+
+interface OpenCommandOptions {
+  base?: string;
+  fullscreen?: boolean;
+  open?: boolean;
+  printUrl?: boolean;
+  review?: string;
+  timeout?: number;
+  tui?: boolean;
+  watch?: boolean;
+}
+
+interface RegisteredOpenReview {
+  client: ServerClient;
+  diff: DiffPayload;
+  info: ServerInfo;
+  reused: boolean;
+  turn: ReviewTurnSummary;
+  url: string;
+  meta: ReviewMeta;
+}
+
 type CliJsonOutput =
   | ServerInfo
   | ReviewEvent
   | ResolveResult
   | StopServerResult
   | ClearReviewsResult
-  | {
-      reviewId: string;
-      turnId?: string;
-      turnIndex?: number;
-      url: string;
-      files: number;
-      scope: DiffPayload['scope']['mode'];
-      artifactDir: string;
-      reused?: boolean;
-    }
-  | {
-      reviewId: string;
-      turnId?: string;
-      turnIndex?: number;
-      url: string;
-      files: number;
-      comments: number;
-      feedbackPath: string;
-      markdownPath: string;
-      artifactDir: string;
-      feedback: FeedbackBundle;
-      reused?: boolean;
-    }
+  | PendingOpenJson
+  | SubmittedOpenJson
+  | PendingTerminalOpenJson
   | { running: boolean; server: ServerInfo | null; reviews: ReviewMeta[] }
   | (ResolveResult & { commentId: string | null; summary: string | null })
   | (ResolveResult & { commentId: string | null; summary: string | null; turn: string | null })
@@ -100,113 +134,129 @@ program
   .option('--no-open', 'do not open a browser')
   .option('--no-watch', 'return immediately after registering the review')
   .option('--timeout <seconds>', 'watch timeout in seconds', Number)
-  .action(
-    async (options: {
-      base?: string;
-      printUrl?: boolean;
-      open?: boolean;
-      review?: string;
-      watch?: boolean;
-      timeout?: number;
-    }) => {
-      const globals = program.opts<GlobalOptions>();
-      let info = await ensureServer();
-      let client = new ServerClient(serverUrl(info));
-      const inheritedBase =
-        options.review && !options.base
-          ? await baseForExistingReview(client, options.review)
-          : null;
-      const diff = await captureDiff(options.base ?? inheritedBase ?? undefined);
-      const created = options.review
-        ? await client.appendReviewTurn(options.review, diff)
-        : await client.createReview(diff);
-      const meta = created.meta;
-      const turn = created.turn ?? meta.turns?.find((summary) => summary.id === meta.activeTurnId);
-      if (!turn) {
-        throw new Error(`Review ${meta.id} has no active turn`);
-      }
-      const reused = 'reused' in created ? created.reused === true : false;
-      let url = created.url;
-      const shouldWatch = options.watch !== false;
+  .option('--tui', 'open an interactive terminal review UI')
+  .option('--fullscreen', 'alias for --tui')
+  .action(async (options: OpenCommandOptions) => {
+    const globals = program.opts<GlobalOptions>();
+    const useTui = options.tui === true || options.fullscreen === true;
+    const shouldWatch = options.watch !== false;
+    if (useTui) {
+      validateTerminalReviewOptions(options);
+    }
 
-      if (options.printUrl) {
-        printPlain(url);
-      }
-      if (options.open !== false) {
-        await openBrowser(url);
-      }
+    const registered = await registerOpenReview(options);
+    let { client, diff, info, meta, reused, turn, url } = registered;
 
-      if (!shouldWatch) {
-        const result = {
+    if (options.printUrl) {
+      printPlain(url);
+    }
+
+    if (useTui) {
+      const keepAlive = startReviewEventKeepAlive(url, meta.id);
+      let terminalReview: TerminalReviewExit;
+      try {
+        terminalReview = await collectTerminalReview({
           reviewId: meta.id,
           turnId: turn.id,
           turnIndex: turn.index,
           url,
-          files: diff.files.length,
-          scope: diff.scope.mode,
-          artifactDir: turn.artifactDir,
-          reused
+          branch: diff.branch,
+          scope: diff.scope,
+          stats: diff.stats,
+          rows: buildTuiRows(diff)
+        });
+      } finally {
+        keepAlive.close();
+      }
+
+      if (terminalReview.type === 'quit') {
+        const result: PendingTerminalOpenJson = {
+          submitted: false,
+          ...pendingOpenJson(meta, turn, url, diff, reused)
         };
-        globals.json ? printJson(result) : printPlain(`Review ${meta.id}: ${url}`);
-        return;
-      }
-
-      const watched = await watchReviewWithReconnect(
-        meta.id,
-        info,
-        options.timeout,
-        async (nextInfo) => {
-          info = nextInfo;
-          client = new ServerClient(serverUrl(info));
-          url = `${serverUrl(info)}/review/${meta.id}`;
-          if (options.printUrl) {
-            printPlain(url);
-          }
-          if (options.open !== false) {
-            await openBrowser(url);
-          }
-        }
-      );
-      info = watched.info;
-      client = new ServerClient(serverUrl(info));
-      const event = watched.event;
-      if (event.type === 'review.cancelled') {
         process.exitCode = 2;
-        globals.json ? printJson(event) : printPlain(`Review ${meta.id} cancelled`);
+        globals.json ? printJson(result) : printPlain(`Review ${meta.id} left pending: ${url}`);
         return;
       }
-      if (event.type !== 'review.submitted') {
-        throw new Error(`Unexpected review event ${event.type}`);
-      }
 
+      await client.submitReview(meta.id, terminalReview.comments);
       const [feedback, submittedRecord] = await Promise.all([
         client.getFeedback(meta.id),
         client.getReview(meta.id)
       ]);
       const submittedTurn =
-        submittedRecord.meta.turns?.find((summary) => summary.id === (event.turnId ?? turn.id)) ??
-        turn;
-      if (!submittedTurn.feedbackPath || !submittedTurn.markdownPath) {
-        throw new Error(`Review ${meta.id} turn ${submittedTurn.index} is missing feedback paths`);
-      }
-      const result = {
-        reviewId: meta.id,
-        turnId: submittedTurn.id,
-        turnIndex: submittedTurn.index,
-        url,
-        files: event.counts.files,
-        comments: event.counts.comments,
-        feedbackPath: submittedTurn.feedbackPath,
-        markdownPath: submittedTurn.markdownPath,
-        artifactDir: submittedTurn.artifactDir,
+        submittedRecord.meta.turns?.find((summary) => summary.id === turn.id) ?? turn;
+      const result = submittedOpenJson({
         feedback,
-        reused
-      };
+        reused,
+        submittedTurn,
+        url,
+        files: countCommentFiles(feedback.comments),
+        comments: feedback.comments.length
+      });
       globals.json
         ? printJson(result)
-        : printPlain(`Review ${meta.id} submitted with ${event.counts.comments} comments`);
+        : printPlain(`Review ${meta.id} submitted with ${feedback.comments.length} comments`);
+      return;
     }
-  );
+
+    if (options.open !== false) {
+      await openBrowser(url);
+    }
+
+    if (!shouldWatch) {
+      const result = pendingOpenJson(meta, turn, url, diff, reused);
+      globals.json ? printJson(result) : printPlain(`Review ${meta.id}: ${url}`);
+      return;
+    }
+
+    const watched = await watchReviewWithReconnect(
+      meta.id,
+      info,
+      options.timeout,
+      async (nextInfo) => {
+        info = nextInfo;
+        client = new ServerClient(serverUrl(info));
+        url = `${serverUrl(info)}/review/${meta.id}`;
+        if (options.printUrl) {
+          printPlain(url);
+        }
+        if (options.open !== false) {
+          await openBrowser(url);
+        }
+      }
+    );
+    info = watched.info;
+    client = new ServerClient(serverUrl(info));
+    const event = watched.event;
+    if (event.type === 'review.cancelled') {
+      process.exitCode = 2;
+      globals.json ? printJson(event) : printPlain(`Review ${meta.id} cancelled`);
+      return;
+    }
+    if (event.type !== 'review.submitted') {
+      throw new Error(`Unexpected review event ${event.type}`);
+    }
+
+    const [feedback, submittedRecord] = await Promise.all([
+      client.getFeedback(meta.id),
+      client.getReview(meta.id)
+    ]);
+    const submittedTurn =
+      submittedRecord.meta.turns?.find((summary) => summary.id === (event.turnId ?? turn.id)) ??
+      turn;
+    const result = submittedOpenJson({
+      feedback,
+      reused,
+      submittedTurn,
+      url,
+      files: event.counts.files,
+      comments: event.counts.comments
+    });
+    globals.json
+      ? printJson(result)
+      : printPlain(`Review ${meta.id} submitted with ${event.counts.comments} comments`);
+  });
 
 program
   .command('watch')
@@ -390,6 +440,150 @@ program
       }
     }
   });
+
+async function registerOpenReview(options: OpenCommandOptions): Promise<RegisteredOpenReview> {
+  const info = await ensureServer();
+  const client = new ServerClient(serverUrl(info));
+  const inheritedBase =
+    options.review && !options.base ? await baseForExistingReview(client, options.review) : null;
+  const diff = await captureDiff(options.base ?? inheritedBase ?? undefined);
+  const created = options.review
+    ? await client.appendReviewTurn(options.review, diff)
+    : await client.createReview(diff);
+  const meta = created.meta;
+  const turn = created.turn ?? meta.turns?.find((summary) => summary.id === meta.activeTurnId);
+  if (!turn) {
+    throw new Error(`Review ${meta.id} has no active turn`);
+  }
+
+  return {
+    client,
+    diff,
+    info,
+    meta,
+    reused: 'reused' in created ? created.reused === true : false,
+    turn,
+    url: created.url
+  };
+}
+
+function validateTerminalReviewOptions(options: OpenCommandOptions): void {
+  if (options.watch === false) {
+    throw new Error(
+      'gloss open --tui is interactive and cannot be combined with --no-watch. Omit --no-watch or use browser mode.'
+    );
+  }
+  if (isScriptedTerminalReview()) {
+    return;
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      'gloss open --tui requires an interactive terminal. Use browser mode, or run it from a TTY.'
+    );
+  }
+}
+
+async function collectTerminalReview(model: TerminalReviewModel): Promise<TerminalReviewExit> {
+  const scripted = scriptedTerminalReviewExit();
+  return scripted ?? runTerminalReview(model);
+}
+
+function scriptedTerminalReviewExit(): TerminalReviewExit | null {
+  const exit = process.env.GLOSS_TUI_TEST_EXIT;
+  if (exit === 'submit') {
+    return { type: 'submit', comments: [] };
+  }
+  if (exit === 'quit') {
+    return { type: 'quit', comments: [] };
+  }
+  return null;
+}
+
+function isScriptedTerminalReview(): boolean {
+  return scriptedTerminalReviewExit() !== null;
+}
+
+function pendingOpenJson(
+  meta: ReviewMeta,
+  turn: ReviewTurnSummary,
+  url: string,
+  diff: DiffPayload,
+  reused: boolean
+): PendingOpenJson {
+  return {
+    reviewId: meta.id,
+    turnId: turn.id,
+    turnIndex: turn.index,
+    url,
+    files: diff.files.length,
+    scope: diff.scope.mode,
+    artifactDir: turn.artifactDir,
+    reused
+  };
+}
+
+function submittedOpenJson({
+  comments,
+  feedback,
+  files,
+  reused,
+  submittedTurn,
+  url
+}: {
+  comments: number;
+  feedback: FeedbackBundle;
+  files: number;
+  reused: boolean;
+  submittedTurn: ReviewTurnSummary;
+  url: string;
+}): SubmittedOpenJson {
+  if (!submittedTurn.feedbackPath || !submittedTurn.markdownPath) {
+    throw new Error(
+      `Review ${feedback.reviewId} turn ${submittedTurn.index} is missing feedback paths`
+    );
+  }
+
+  return {
+    reviewId: feedback.reviewId,
+    turnId: submittedTurn.id,
+    turnIndex: submittedTurn.index,
+    url,
+    files,
+    comments,
+    feedbackPath: submittedTurn.feedbackPath,
+    markdownPath: submittedTurn.markdownPath,
+    artifactDir: submittedTurn.artifactDir,
+    feedback,
+    reused
+  };
+}
+
+function startReviewEventKeepAlive(reviewUrl: string, reviewId: string): { close: () => void } {
+  const controller = new AbortController();
+  const eventsUrl = `${reviewUrl.replace(/\/review\/[^/]+$/, '')}/api/reviews/${reviewId}/events`;
+  void fetch(eventsUrl, { signal: controller.signal })
+    .then(async (response) => {
+      const reader = response.body?.getReader();
+      if (!reader) {
+        return;
+      }
+      while (true) {
+        const { done } = await reader.read();
+        if (done) {
+          return;
+        }
+      }
+    })
+    .catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+    });
+
+  return {
+    close: () => controller.abort()
+  };
+}
 
 async function watchReviewWithReconnect(
   reviewId: string,
