@@ -19,7 +19,7 @@ import { createHighlighterCore, type HighlighterCore, type ThemedToken } from 's
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import wasm from 'shiki/wasm';
 import { diffLineKey, diffLineNumber, diffLineSide } from '../shared/diff-lines';
-import type { DiffFile } from '../shared/types';
+import type { DiffFile, DiffLine, Side } from '../shared/types';
 import type { ResolvedTheme } from './theme';
 
 export interface SyntaxToken {
@@ -92,28 +92,55 @@ export async function highlightDiffFile(
   const highlightedLines: HighlightedDiffLines = new Map();
 
   for (const hunk of file.hunks) {
-    const tokensByLine = highlighter.codeToTokens(
-      hunk.lines.map((line) => line.content).join('\n'),
-      {
-        lang: language,
-        theme: diffThemeByResolvedTheme[theme]
-      }
-    ).tokens;
-
-    hunk.lines.forEach((line, index) => {
-      const side = diffLineSide(line);
-      const lineNumber = diffLineNumber(line);
-      if (lineNumber == null) {
-        return;
-      }
-      highlightedLines.set(
-        diffLineKey(side, lineNumber),
-        toSyntaxTokens(tokensByLine[index] ?? [])
-      );
-    });
+    highlightDiffSide(
+      hunk.lines.filter((line) => line.type !== 'add'),
+      'L',
+      language,
+      theme,
+      highlighter,
+      highlightedLines
+    );
+    highlightDiffSide(
+      hunk.lines.filter((line) => line.type !== 'delete'),
+      'R',
+      language,
+      theme,
+      highlighter,
+      highlightedLines
+    );
   }
 
   return highlightedLines;
+}
+
+function highlightDiffSide(
+  lines: DiffLine[],
+  side: Side,
+  language: string,
+  theme: ResolvedTheme,
+  highlighter: HighlighterCore,
+  highlightedLines: HighlightedDiffLines
+): void {
+  if (lines.length === 0) {
+    return;
+  }
+
+  const tokensByLine = highlighter.codeToTokens(lines.map((line) => line.content).join('\n'), {
+    lang: language,
+    theme: diffThemeByResolvedTheme[theme]
+  }).tokens;
+
+  lines.forEach((line, index) => {
+    if (diffLineSide(line) !== side) {
+      return;
+    }
+
+    const lineNumber = diffLineNumber(line);
+    if (lineNumber == null) {
+      return;
+    }
+    highlightedLines.set(diffLineKey(side, lineNumber), toSyntaxTokens(tokensByLine[index] ?? []));
+  });
 }
 
 export async function highlightSourceContent(

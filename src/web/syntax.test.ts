@@ -92,6 +92,44 @@ describe('highlightDiffFile', () => {
     );
   });
 
+  it('keeps multiline syntax state separate for the old and new file', async () => {
+    const file: DiffFile = {
+      path: 'example.py',
+      oldPath: null,
+      additions: 3,
+      deletions: 3,
+      isBinary: false,
+      isDeleted: false,
+      isNew: false,
+      isRenamed: false,
+      language: 'python',
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 5,
+          newStart: 1,
+          newLines: 5,
+          header: '',
+          lines: [
+            { type: 'delete', oldLine: 1, newLine: null, content: 'def old_name():' },
+            { type: 'delete', oldLine: 2, newLine: null, content: '    """Old docs' },
+            { type: 'add', oldLine: null, newLine: 1, content: 'def new_name():' },
+            { type: 'add', oldLine: null, newLine: 2, content: '    """New docs' },
+            { type: 'context', oldLine: 3, newLine: 3, content: '    Shared details.' },
+            { type: 'context', oldLine: 4, newLine: 4, content: '    """' },
+            { type: 'delete', oldLine: 5, newLine: null, content: '    old_value = True' },
+            { type: 'add', oldLine: null, newLine: 5, content: '    new_value = True' }
+          ]
+        }
+      ]
+    };
+
+    const highlighted = await highlightDiffFile(file);
+
+    expect(highlighted?.get(diffLineKey('L', 5))?.map((token) => token.content)).toContain('True');
+    expect(highlighted?.get(diffLineKey('R', 5))?.map((token) => token.content)).toContain('True');
+  });
+
   it('falls back for unsupported languages and binary files', async () => {
     const file: DiffFile = {
       path: 'notes.txt',
