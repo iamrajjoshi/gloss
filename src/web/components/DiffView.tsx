@@ -45,7 +45,7 @@ import {
   mergeContextLines,
   visibleDiffLines
 } from './diff-context';
-import { fileCardElementId } from './diff-view-helpers';
+import { fileCardElementId, hunkHeaderForVisibleLines } from './diff-view-helpers';
 import { FileHeader } from './FileHeader';
 
 interface RowRef {
@@ -754,13 +754,14 @@ function DiffFileTable({
         {file.isBinary ? <div className="binary-note">Binary file changed</div> : null}
         {file.hunks.map((hunk, hunkIndex) => {
           const gap = contextGapByHunkIndex.get(hunkIndex);
+          const header = hunkHeaderForVisibleLines(
+            hunk,
+            expandedFile.hunks[hunkIndex]?.lines ?? hunk.lines
+          );
           return (
             <div className="hunk" key={`${hunk.oldStart}:${hunk.newStart}`}>
               {gap ? renderContextGap(gap) : null}
-              <div className="hunk-header">
-                {hunk.header ||
-                  `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
-              </div>
+              {header ? <div className="hunk-header">{header}</div> : null}
               {hunk.lines.map((line) => renderDiffLine(line, 'hunk'))}
             </div>
           );
