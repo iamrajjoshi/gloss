@@ -69,6 +69,12 @@ describe('highlightDiffFile', () => {
     ).toBe("import x from 'x';");
     expect(
       highlighted
+        ?.get(diffLineKey('L', 1))
+        ?.map((token) => token.content)
+        .join('')
+    ).toBe("import x from 'x';");
+    expect(
+      highlighted
         ?.get(diffLineKey('L', 2))
         ?.map((token) => token.content)
         .join('')

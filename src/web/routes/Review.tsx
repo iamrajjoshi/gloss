@@ -3,6 +3,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Columns2,
   FileCode2,
   GitBranch,
   GitCommitHorizontal,
@@ -55,11 +56,12 @@ import {
   openReviewFile
 } from '../api';
 import { DiffView, type HiddenDiffInfo, type SourcePeekTrigger } from '../components/DiffView';
-import { fileCardElementId } from '../components/diff-view-helpers';
+import { type DiffViewMode, fileCardElementId } from '../components/diff-view-helpers';
 import { FileTree } from '../components/FileTree';
 import { buildExtensionBuckets, filterDiffFiles } from '../components/file-tree-helpers';
 import { SourcePeekPanel, type SourcePeekPanelState } from '../components/SourcePeekPanel';
 import { SubmitBar } from '../components/SubmitBar';
+import { loadDiffViewMode, saveDiffViewMode } from '../diff-view-preference';
 import { useReviewStore } from '../store';
 import { type ThemePreference, useTheme } from '../theme';
 import { loadViewedFiles, saveViewedFiles } from '../viewed-files';
@@ -260,6 +262,7 @@ function flashScrollTarget(target: HTMLElement) {
 function ReviewContent({ reviewId }: { reviewId: string }) {
   const [record, setRecord] = useState<ReviewRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [diffViewMode, setDiffViewMode] = useState<DiffViewMode>(() => loadDiffViewMode());
   const [wrapLines, setWrapLines] = useState(false);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(true);
@@ -397,6 +400,12 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
     setSelectedSourcePeek(null);
     setSourcePeekState(null);
   }, []);
+
+  const toggleDiffViewMode = () => {
+    const nextMode = diffViewMode === 'unified' ? 'split' : 'unified';
+    saveDiffViewMode(nextMode);
+    setDiffViewMode(nextMode);
+  };
 
   const resetTurnView = useCallback(() => {
     setCommitView({ mode: 'all' });
@@ -865,6 +874,16 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                   <FileCode2 size={16} />
                 </button>
                 <button
+                  aria-label="Side-by-side diff view"
+                  aria-pressed={diffViewMode === 'split'}
+                  className="icon-button diff-view-toggle"
+                  title="Side-by-side diff view"
+                  type="button"
+                  onClick={toggleDiffViewMode}
+                >
+                  <Columns2 size={16} />
+                </button>
+                <button
                   aria-label={wrapLines ? 'Unwrap lines' : 'Wrap lines'}
                   aria-pressed={wrapLines}
                   className="icon-button wrap-toggle"
@@ -952,6 +971,7 @@ function ReviewContent({ reviewId }: { reviewId: string }) {
                 reviewId={reviewId}
                 selectedSourcePeek={selectedSourcePeek}
                 turnId={selectedTurn.id}
+                viewMode={diffViewMode}
                 viewedFiles={viewedFiles}
                 wrapLines={wrapLines}
                 openTargets={openTargets}

@@ -18,7 +18,7 @@ import githubLightDefault from '@shikijs/themes/github-light-default';
 import { createHighlighterCore, type HighlighterCore, type ThemedToken } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import wasm from 'shiki/wasm';
-import { diffLineKey, diffLineNumber, diffLineSide } from '../shared/diff-lines';
+import { diffLineKey } from '../shared/diff-lines';
 import type { DiffFile, DiffLine, Side } from '../shared/types';
 import type { ResolvedTheme } from './theme';
 
@@ -131,11 +131,7 @@ function highlightDiffSide(
   }).tokens;
 
   lines.forEach((line, index) => {
-    if (diffLineSide(line) !== side) {
-      return;
-    }
-
-    const lineNumber = diffLineNumber(line);
+    const lineNumber = side === 'L' ? line.oldLine : line.newLine;
     if (lineNumber == null) {
       return;
     }

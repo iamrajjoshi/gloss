@@ -14,7 +14,7 @@ import {
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isLineComment } from '../../shared/comments';
-import { diffLineKey, diffLineNumber, diffLineSide } from '../../shared/diff-lines';
+import { diffLineKey, diffLineSide } from '../../shared/diff-lines';
 import type {
   DiffContextSource,
   DiffFile,
@@ -45,7 +45,23 @@ import {
   mergeContextLines,
   visibleDiffLines
 } from './diff-context';
-import { fileCardElementId, hunkHeaderForVisibleLines } from './diff-view-helpers';
+import {
+  buildDiffVisualIndex,
+  clampSplitPanePercentage,
+  DEFAULT_SPLIT_PANE_PERCENTAGE,
+  type DiffViewMode,
+  diffLineMarker,
+  diffLineNumberForSide,
+  diffSnippetForRange,
+  fileCardElementId,
+  hasResizableSplitContent,
+  hunkHeaderForVisibleLines,
+  MAX_SPLIT_PANE_PERCENTAGE,
+  MIN_SPLIT_PANE_PERCENTAGE,
+  splitDiffLines,
+  splitPanePercentageForKey,
+  splitPanePercentageForPointer
+} from './diff-view-helpers';
 import { FileHeader } from './FileHeader';
 
 interface RowRef {
@@ -85,6 +101,7 @@ export function DiffView({
   readOnly = false,
   reviewId,
   turnId,
+  viewMode = 'unified',
   wrapLines = false,
   viewedFiles = new Set<string>(),
   onViewedChange = () => undefined,
@@ -106,6 +123,7 @@ export function DiffView({
   reviewId?: string;
   selectedSourcePeek?: SourcePeekTrigger | null;
   turnId?: string;
+  viewMode?: DiffViewMode;
   wrapLines?: boolean;
   viewedFiles?: Set<string>;
   onViewedChange?: (filePath: string, viewed: boolean) => void;
@@ -117,10 +135,24 @@ export function DiffView({
   onRevealHiddenFile?: (filePath: string) => void;
 }) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+  const [splitPanePercentage, setSplitPanePercentage] = useState(DEFAULT_SPLIT_PANE_PERCENTAGE);
   const expandedActiveFilePath = useRef(activeFilePath);
+  const diffStackRef = useRef<HTMLElement>(null);
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
   const renderedFiles = files ?? diff.files;
+
+  const previewSplitPanePercentage = (percentage: number) => {
+    const nextPercentage = clampSplitPanePercentage(percentage);
+    const style = diffStackRef.current?.style;
+    style?.setProperty('--diff-split-position', `${nextPercentage}%`);
+    style?.setProperty('--diff-split-left-track', `${nextPercentage}fr`);
+    style?.setProperty('--diff-split-right-track', `${100 - nextPercentage}fr`);
+    return nextPercentage;
+  };
+  const commitSplitPanePercentage = (percentage: number) => {
+    setSplitPanePercentage(previewSplitPanePercentage(percentage));
+  };
 
   if (activeFilePath !== expandedActiveFilePath.current) {
     expandedActiveFilePath.current = activeFilePath;
@@ -146,7 +178,17 @@ export function DiffView({
   };
 
   return (
-    <section className="diff-stack">
+    <section
+      className="diff-stack"
+      ref={diffStackRef}
+      style={
+        {
+          '--diff-split-position': `${splitPanePercentage}%`,
+          '--diff-split-left-track': `${splitPanePercentage}fr`,
+          '--diff-split-right-track': `${100 - splitPanePercentage}fr`
+        } as CSSProperties
+      }
+    >
       {renderedFiles.length === 0
         ? (emptyState ?? <EmptyDiff record={record} />)
         : renderedFiles.map((file) => {
@@ -196,8 +238,12 @@ export function DiffView({
                     readOnly={readOnly}
                     reviewId={reviewId}
                     selectedSourcePeek={selectedSourcePeek}
+                    splitPanePercentage={splitPanePercentage}
                     turnId={turnId}
+                    viewMode={viewMode}
                     wrapLines={wrapLines}
+                    onSplitPaneChange={commitSplitPanePercentage}
+                    onSplitPanePreview={previewSplitPanePercentage}
                     onSourcePeek={onSourcePeek}
                   />
                 )}
@@ -294,8 +340,12 @@ function DiffFileTable({
   readOnly,
   reviewId,
   selectedSourcePeek,
+  splitPanePercentage,
   turnId,
+  viewMode,
   wrapLines,
+  onSplitPaneChange,
+  onSplitPanePreview,
   onSourcePeek
 }: {
   contextSource?: DiffContextSource;
@@ -303,8 +353,12 @@ function DiffFileTable({
   readOnly: boolean;
   reviewId?: string;
   selectedSourcePeek: SourcePeekTrigger | null;
+  splitPanePercentage: number;
   turnId?: string;
+  viewMode: DiffViewMode;
   wrapLines: boolean;
+  onSplitPaneChange: (percentage: number) => void;
+  onSplitPanePreview: (percentage: number) => void;
   onSourcePeek: (trigger: SourcePeekTrigger) => void;
 }) {
   const comments = useReviewStore((state) => state.comments);
@@ -315,6 +369,7 @@ function DiffFileTable({
   const { resolvedTheme } = useTheme();
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
+  const [draftBody, setDraftBody] = useState('');
   const [editingComment, setEditingComment] = useState<{ id: string; body: string } | null>(null);
   const [highlightedFile, setHighlightedFile] = useState<{
     file: DiffFile;
@@ -339,7 +394,10 @@ function DiffFileTable({
       ? highlightedFile.lines
       : null;
   const visibleLines = useMemo(() => visibleDiffLines(file, contextByGap), [contextByGap, file]);
-  const visualIndexByLine = useMemo(() => buildVisualIndex(visibleLines), [visibleLines]);
+  const visualIndexByLine = useMemo(
+    () => buildDiffVisualIndex(visibleLines, viewMode),
+    [viewMode, visibleLines]
+  );
   const resolvedByCommentId = useMemo(
     () => new Map((resolution?.comments ?? []).map((comment) => [comment.commentId, comment])),
     [resolution]
@@ -362,8 +420,8 @@ function DiffFileTable({
     const startLine = Math.min(row.line, end.line);
     const endLine = Math.max(row.line, end.line);
     const snippet =
-      collectVisualSnippet(visibleLines, visualIndexByLine, row.side, startLine, endLine) ||
-      row.snippet;
+      diffSnippetForRange(visibleLines, row.side, startLine, endLine, viewMode) || row.snippet;
+    setDraftBody('');
     setDraft({
       filePath: file.path,
       side: row.side,
@@ -559,9 +617,9 @@ function DiffFileTable({
     };
   }, [expandedFile, resolvedTheme]);
 
-  const renderDiffLine = (line: DiffLine, keyPrefix: string) => {
-    const side = diffLineSide(line);
-    const lineNumber = diffLineNumber(line);
+  const renderDiffLine = (line: DiffLine, keyPrefix: string, explicitSide?: Side) => {
+    const side = explicitSide ?? diffLineSide(line);
+    const lineNumber = diffLineNumberForSide(line, side);
     if (lineNumber == null) {
       return null;
     }
@@ -572,26 +630,56 @@ function DiffFileTable({
       snippet: line.content
     };
     const visualIndex = visualIndexByLine.get(diffLineKey(side, lineNumber));
-    const activeVisualRange =
-      visualIndex != null && isInVisualRange(visualIndex, dragVisualRange)
-        ? dragVisualRange
-        : visualIndex != null && isInVisualRange(visualIndex, draftVisualRange)
-          ? draftVisualRange
+    const activeDragSelection =
+      (viewMode === 'unified' || dragStart?.side === side) &&
+      visualIndex != null &&
+      dragVisualRange &&
+      isInVisualRange(visualIndex, dragVisualRange)
+        ? { index: visualIndex, range: dragVisualRange }
+        : null;
+    const draftLineNumber =
+      draft && (!explicitSide || draft.side === side)
+        ? diffLineNumberForSide(line, draft.side)
+        : null;
+    const draftVisualIndex =
+      viewMode === 'unified'
+        ? visualIndex
+        : draft && draftLineNumber != null
+          ? visualIndexByLine.get(diffLineKey(draft.side, draftLineNumber))
           : null;
+    const activeDraftSelection =
+      draftVisualIndex != null &&
+      draftVisualRange &&
+      isInVisualRange(draftVisualIndex, draftVisualRange)
+        ? { index: draftVisualIndex, range: draftVisualRange }
+        : null;
+    const activeSelection = activeDragSelection ?? activeDraftSelection;
     const selectionClass =
-      visualIndex != null && activeVisualRange
-        ? selectionClassForLine(visualIndex, activeVisualRange.start, activeVisualRange.end)
+      activeSelection != null
+        ? selectionClassForLine(
+            activeSelection.index,
+            activeSelection.range.start,
+            activeSelection.range.end
+          )
         : '';
     const showDraftComposer =
-      draft && draft.filePath === file.path && draft.side === side && lineNumber === draft.endLine;
-    const rowComments = fileComments.filter(
-      (comment) =>
-        comment.side === side && lineNumber === Math.max(comment.startLine, comment.endLine)
-    );
+      draft && draft.filePath === file.path && draftLineNumber === draft.endLine;
+    const rowComments = fileComments.filter((comment) => {
+      if (explicitSide && comment.side !== side) {
+        return false;
+      }
+      return (
+        diffLineNumberForSide(line, comment.side) === Math.max(comment.startLine, comment.endLine)
+      );
+    });
     return (
       <div
+        className={explicitSide ? 'split-diff-cell' : undefined}
         key={`${keyPrefix}:${line.type}:${line.oldLine ?? 'x'}:${line.newLine ?? 'x'}:${line.content}`}
       >
+        {explicitSide ? (
+          <span className="sr-only">{side === 'L' ? 'Old version' : 'New version'}</span>
+        ) : null}
         <div
           className={`diff-row ${line.type} ${readOnly ? 'read-only' : ''} ${selectionClass} ${showDraftComposer ? 'range-continues' : ''}`}
           data-file-path={file.path}
@@ -600,12 +688,20 @@ function DiffFileTable({
         >
           {selectionClass ? <span className="selection-rail" aria-hidden="true" /> : null}
           <div className="diff-gutter">
-            <span className="line-number old">{line.oldLine ?? ''}</span>
-            <span className="line-number new">{line.newLine ?? ''}</span>
-            <span className="marker">{markerForLine(line)}</span>
+            {explicitSide ? (
+              <span className={`line-number ${side === 'L' ? 'old' : 'new'}`}>{lineNumber}</span>
+            ) : (
+              <>
+                <span className="line-number old">{line.oldLine ?? ''}</span>
+                <span className="line-number new">{line.newLine ?? ''}</span>
+              </>
+            )}
+            <span className="marker">{diffLineMarker(line)}</span>
             {!readOnly ? (
               <button
-                aria-label={`Comment on ${file.path} line ${lineNumber}`}
+                aria-label={`Comment on ${file.path}${
+                  explicitSide ? ` ${side === 'L' ? 'old' : 'new'}` : ''
+                } line ${lineNumber}`}
                 className="comment-handle"
                 type="button"
                 onMouseDown={(event) => startSelection(row, event)}
@@ -719,15 +815,58 @@ function DiffFileTable({
             </div>
           );
         })}
-        {showDraftComposer && !readOnly ? <CommentComposer tone={line.type} /> : null}
+        {showDraftComposer && !readOnly ? (
+          <CommentComposer body={draftBody} tone={line.type} onBodyChange={setDraftBody} />
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderDiffLines = (lines: DiffLine[], keyPrefix: string) => {
+    if (viewMode === 'unified') {
+      return lines.map((line) => renderDiffLine(line, keyPrefix));
+    }
+
+    const rows = splitDiffLines(lines);
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const paneStyle = { gridRow: `1 / span ${rows.length}` };
+    return (
+      <div className="split-diff-block" key={`${keyPrefix}:split`}>
+        <div className="split-diff-pane split-diff-pane-left" style={paneStyle}>
+          {rows.map((row, index) => {
+            const key = `${keyPrefix}:left:${index}:${row.left?.oldLine ?? 'x'}`;
+            return row.left ? (
+              renderDiffLine(row.left, key, 'L')
+            ) : (
+              <div className="split-diff-cell split-diff-empty" key={key}>
+                <span className="sr-only">Old version, no line</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="split-diff-pane split-diff-pane-right" style={paneStyle}>
+          {rows.map((row, index) => {
+            const key = `${keyPrefix}:right:${index}:${row.right?.newLine ?? 'x'}`;
+            return row.right ? (
+              renderDiffLine(row.right, key, 'R')
+            ) : (
+              <div className="split-diff-cell split-diff-empty" key={key}>
+                <span className="sr-only">New version, no line</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
 
   const renderContextGap = (gap: DiffContextGap) =>
-    expandedContextSegments(gap, contextByGap[gap.id]).map((segment) => {
+    expandedContextSegments(gap, contextByGap[gap.id]).map((segment, segmentIndex) => {
       if (segment.type === 'lines') {
-        return segment.lines.map((line) => renderDiffLine(line, `context:${gap.id}`));
+        return renderDiffLines(segment.lines, `context:${gap.id}:${segmentIndex}`);
       }
       return (
         <HiddenLinesControl
@@ -744,13 +883,29 @@ function DiffFileTable({
       );
     });
 
+  const showSplitPanes =
+    viewMode === 'split' && hasResizableSplitContent(file.isBinary, file.hunks.length);
+
   return (
     <section
       aria-label={`${file.path} diff`}
-      className={`diff-scroller ${wrapLines ? 'wrap-lines' : ''}`}
+      className={`diff-scroller ${viewMode === 'split' ? 'split-mode' : ''} ${
+        wrapLines ? 'wrap-lines' : ''
+      }`}
       key={wrapLines ? 'wrapped' : 'unwrapped'}
     >
-      <div className={`diff-table ${dragStart ? 'selecting' : ''}`}>
+      <div
+        className={`diff-table ${showSplitPanes ? 'split-view' : ''} ${
+          dragStart ? 'selecting' : ''
+        }`}
+      >
+        {showSplitPanes ? (
+          <SplitDiffDivider
+            percentage={splitPanePercentage}
+            onChange={onSplitPaneChange}
+            onPreview={onSplitPanePreview}
+          />
+        ) : null}
         {file.isBinary ? <div className="binary-note">Binary file changed</div> : null}
         {file.hunks.map((hunk, hunkIndex) => {
           const gap = contextGapByHunkIndex.get(hunkIndex);
@@ -762,13 +917,122 @@ function DiffFileTable({
             <div className="hunk" key={`${hunk.oldStart}:${hunk.newStart}`}>
               {gap ? renderContextGap(gap) : null}
               {header ? <div className="hunk-header">{header}</div> : null}
-              {hunk.lines.map((line) => renderDiffLine(line, 'hunk'))}
+              {renderDiffLines(hunk.lines, `hunk:${hunkIndex}`)}
             </div>
           );
         })}
       </div>
     </section>
   );
+}
+
+function SplitDiffDivider({
+  percentage,
+  onChange,
+  onPreview
+}: {
+  percentage: number;
+  onChange: (percentage: number) => void;
+  onPreview: (percentage: number) => void;
+}) {
+  const cleanupResizeRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => cleanupResizeRef.current?.(), []);
+
+  const startResize = (event: React.PointerEvent<HTMLHRElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const table = event.currentTarget.closest<HTMLElement>('.diff-table');
+    if (!table) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    cleanupResizeRef.current?.();
+
+    const handle = event.currentTarget;
+    const bounds = table.getBoundingClientRect();
+    const pointerId = event.pointerId;
+    let nextPercentage = percentage;
+    let moved = false;
+
+    const updateFromPointer = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      moveEvent.preventDefault();
+      moved = true;
+      nextPercentage = splitPanePercentageForPointer(
+        moveEvent.clientX,
+        bounds.left,
+        bounds.width,
+        nextPercentage
+      );
+      handle.setAttribute('aria-valuenow', String(Math.round(nextPercentage)));
+      handle.setAttribute('aria-valuetext', splitPaneValueText(nextPercentage));
+      onPreview(nextPercentage);
+    };
+    const cleanup = () => {
+      window.removeEventListener('pointermove', updateFromPointer);
+      window.removeEventListener('pointerup', finishResize);
+      window.removeEventListener('pointercancel', cancelResize);
+      window.removeEventListener('blur', cancelResize);
+      document.body.classList.remove('split-diff-resizing');
+      delete handle.dataset.resizing;
+      cleanupResizeRef.current = null;
+    };
+    const finishResize = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) {
+        return;
+      }
+      if (moved) {
+        updateFromPointer(upEvent);
+      }
+      cleanup();
+      onChange(nextPercentage);
+    };
+    const cancelResize = () => {
+      cleanup();
+      onChange(nextPercentage);
+    };
+
+    handle.dataset.resizing = 'true';
+    document.body.classList.add('split-diff-resizing');
+    cleanupResizeRef.current = cleanup;
+    window.addEventListener('pointermove', updateFromPointer);
+    window.addEventListener('pointerup', finishResize);
+    window.addEventListener('pointercancel', cancelResize);
+    window.addEventListener('blur', cancelResize, { once: true });
+  };
+
+  return (
+    <hr
+      aria-label="Resize old and new diff panes"
+      aria-orientation="vertical"
+      aria-valuemax={MAX_SPLIT_PANE_PERCENTAGE}
+      aria-valuemin={MIN_SPLIT_PANE_PERCENTAGE}
+      aria-valuenow={Math.round(percentage)}
+      aria-valuetext={splitPaneValueText(percentage)}
+      className="split-diff-resize-handle"
+      tabIndex={0}
+      title="Resize old and new diff panes"
+      onKeyDown={(event) => {
+        const nextPercentage = splitPanePercentageForKey(percentage, event.key);
+        if (nextPercentage == null) {
+          return;
+        }
+        event.preventDefault();
+        onChange(nextPercentage);
+      }}
+      onPointerDown={startResize}
+    />
+  );
+}
+
+function splitPaneValueText(percentage: number): string {
+  const roundedPercentage = Math.round(percentage);
+  return `${roundedPercentage}% old, ${100 - roundedPercentage}% new`;
 }
 
 function HiddenLinesControl({
@@ -1057,16 +1321,6 @@ function styleForToken(token: SyntaxToken): CSSProperties {
   return style;
 }
 
-function markerForLine(line: DiffLine): string {
-  if (line.type === 'add') {
-    return '+';
-  }
-  if (line.type === 'delete') {
-    return '-';
-  }
-  return ' ';
-}
-
 function selectionClassForLine(lineNumber: number, startLine: number, endLine: number): string {
   if (startLine === endLine) {
     return 'range-selected range-single';
@@ -1097,20 +1351,6 @@ function contextKey(
   return `${reviewId}:${turnId ?? ''}:range:${source.fromSha}:${source.toSha}`;
 }
 
-function buildVisualIndex(lines: DiffLine[]): Map<string, number> {
-  const indexByLine = new Map<string, number>();
-  let visualIndex = 0;
-  for (const line of lines) {
-    const side = diffLineSide(line);
-    const lineNumber = diffLineNumber(line);
-    if (lineNumber != null) {
-      indexByLine.set(diffLineKey(side, lineNumber), visualIndex);
-      visualIndex += 1;
-    }
-  }
-  return indexByLine;
-}
-
 function visualRangeFor(
   indexByLine: Map<string, number>,
   side: Side,
@@ -1130,32 +1370,4 @@ function visualRangeFor(
 
 function isInVisualRange(index: number, range: { start: number; end: number } | null): boolean {
   return Boolean(range && index >= range.start && index <= range.end);
-}
-
-function collectVisualSnippet(
-  lines: DiffLine[],
-  indexByLine: Map<string, number>,
-  side: Side,
-  startLine: number,
-  endLine: number
-): string {
-  const selectedLines: DiffLine[] = [];
-  const range = visualRangeFor(indexByLine, side, startLine, endLine);
-  if (!range) {
-    return '';
-  }
-
-  lines.forEach((line, visualIndex) => {
-    if (diffLineNumber(line) == null) {
-      return;
-    }
-    if (visualIndex >= range.start && visualIndex <= range.end) {
-      selectedLines.push(line);
-    }
-  });
-
-  const hasMixedLineTypes = new Set(selectedLines.map((line) => line.type)).size > 1;
-  return selectedLines
-    .map((line) => (hasMixedLineTypes ? `${markerForLine(line)}${line.content}` : line.content))
-    .join('\n');
 }
