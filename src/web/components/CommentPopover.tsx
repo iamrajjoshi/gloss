@@ -1,15 +1,22 @@
 import { MessageSquarePlus } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { formatLineRange } from '../../shared/comments';
 import type { DiffLineType } from '../../shared/types';
 import { isSubmitCommentShortcut } from '../shortcuts';
 import { useReviewStore } from '../store';
 
-export function CommentComposer({ tone }: { tone: DiffLineType }) {
+export function CommentComposer({
+  body,
+  tone,
+  onBodyChange
+}: {
+  body: string;
+  tone: DiffLineType;
+  onBodyChange: (body: string) => void;
+}) {
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
   const addComment = useReviewStore((state) => state.addComment);
-  const [body, setBody] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -27,12 +34,12 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
       ? `Comment on line ${formatLineRange(draft)}`
       : `Comment on range ${formatLineRange(draft)}`;
   const cancelDraft = () => {
-    setBody('');
+    onBodyChange('');
     setDraft(null);
   };
   const submitComment = () => {
     addComment(body);
-    setBody('');
+    onBodyChange('');
   };
 
   return (
@@ -52,7 +59,7 @@ export function CommentComposer({ tone }: { tone: DiffLineType }) {
           placeholder="Request change"
           ref={textareaRef}
           value={body}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => onBodyChange(event.target.value)}
           onKeyDown={(event) => {
             if (isSubmitCommentShortcut(event)) {
               event.preventDefault();
