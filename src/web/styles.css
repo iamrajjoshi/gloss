@@ -250,6 +250,8 @@ textarea:focus-visible,
 code,
 pre {
   font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0;
 }
 
 .sr-only {
