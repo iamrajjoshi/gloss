@@ -9,7 +9,8 @@ import {
   LoaderCircle,
   MessageSquare,
   Pencil,
-  Plus
+  Plus,
+  Trash2
 } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -366,6 +367,7 @@ function DiffFileTable({
   const draft = useReviewStore((state) => state.draft);
   const setDraft = useReviewStore((state) => state.setDraft);
   const updateComment = useReviewStore((state) => state.updateComment);
+  const removeComment = useReviewStore((state) => state.removeComment);
   const { resolvedTheme } = useTheme();
   const [dragStart, setDragStart] = useState<RowRef | null>(null);
   const [dragEnd, setDragEnd] = useState<RowRef | null>(null);
@@ -802,15 +804,26 @@ function DiffFileTable({
                 ) : null}
               </div>
               {!readOnly && !isEditing ? (
-                <button
-                  aria-label="Edit comment"
-                  className="inline-comment-edit-button"
-                  title="Edit comment"
-                  type="button"
-                  onClick={() => setEditingComment({ id: comment.id, body: comment.body })}
-                >
-                  <Pencil size={13} />
-                </button>
+                <div className="inline-comment-actions">
+                  <button
+                    aria-label="Edit comment"
+                    className="inline-comment-action-button"
+                    title="Edit comment"
+                    type="button"
+                    onClick={() => setEditingComment({ id: comment.id, body: comment.body })}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    aria-label="Delete comment"
+                    className="inline-comment-action-button"
+                    title="Delete comment"
+                    type="button"
+                    onClick={() => removeComment(comment.id)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               ) : null}
             </div>
           );

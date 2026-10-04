@@ -1,4 +1,14 @@
-import { Check, MessageSquare, Pencil, Plus, Send, Trash2, X } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Search,
+  Send,
+  Trash2,
+  X
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { formatLineRange, isLineComment } from '../../shared/comments';
@@ -26,6 +36,8 @@ export function SubmitBar({
   const [generalCommentBody, setGeneralCommentBody] = useState('');
   const [selectedGeneralCommentId, setSelectedGeneralCommentId] = useState<string | null>(null);
   const [editingGeneralCommentBody, setEditingGeneralCommentBody] = useState<string | null>(null);
+  const [feedbackExpanded, setFeedbackExpanded] = useState(false);
+  const [feedbackQuery, setFeedbackQuery] = useState('');
   const [state, setState] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const generalDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -37,12 +49,25 @@ export function SubmitBar({
   const generalComments = comments.filter(
     (comment): comment is GeneralComment => !isLineComment(comment)
   );
+  const hasManyComments = comments.length > 5;
+  const normalizedFeedbackQuery = hasManyComments ? feedbackQuery.trim().toLowerCase() : '';
+  const visibleLineComments = normalizedFeedbackQuery
+    ? lineComments.filter((comment) =>
+        `${comment.filePath} ${formatLineRange(comment)} ${comment.body}`
+          .toLowerCase()
+          .includes(normalizedFeedbackQuery)
+      )
+    : lineComments;
+  const visibleGeneralComments = normalizedFeedbackQuery
+    ? generalComments.filter((comment) =>
+        comment.body.toLowerCase().includes(normalizedFeedbackQuery)
+      )
+    : generalComments;
   const selectedGeneralComment =
     selectedGeneralCommentId === null
       ? null
       : (generalComments.find((comment) => comment.id === selectedGeneralCommentId) ?? null);
   const isEditingGeneralComment = editingGeneralCommentBody !== null;
-  const hasLineComments = lineComments.length > 0;
   const closeGeneralCommentDialog = useCallback(() => {
     setSelectedGeneralCommentId(null);
     setEditingGeneralCommentBody(null);
@@ -128,86 +153,136 @@ export function SubmitBar({
     <>
       <aside className="submit-bar">
         <div className="feedback-panel">
-          {hasLineComments ? (
-            <div className="inline-feedback-row">
-              <span className="feedback-row-label inline-feedback-label">
-                <MessageSquare size={14} />
-                Inline feedback
-                <span className="feedback-row-count">{lineComments.length}</span>
+          {hasManyComments ? (
+            <button
+              aria-controls="feedback-list-panel"
+              aria-expanded={feedbackExpanded}
+              className="feedback-summary-toggle"
+              type="button"
+              onClick={() => {
+                setFeedbackExpanded((expanded) => !expanded);
+                setFeedbackQuery('');
+              }}
+            >
+              <MessageSquare size={15} />
+              <span>Feedback</span>
+              <span className="feedback-row-count">{comments.length}</span>
+              <span className="feedback-summary-detail">
+                {lineComments.length} inline · {generalComments.length} general
               </span>
-              <div className="comment-list">
-                {lineComments.map((comment) => {
-                  const chip = commentChipInfo(comment);
-                  return (
-                    <div
-                      className={`comment-chip ${chip.tone}`}
-                      key={comment.id}
-                      title={chip.title}
-                    >
-                      <button
-                        className="comment-chip-target"
-                        type="button"
-                        title={`Jump to ${chip.title}`}
-                        onClick={() => onLineCommentSelect?.(comment)}
-                      >
-                        <span className="comment-chip-kind">{chip.kind}</span>
-                        <span className="comment-chip-text">{chip.text}</span>
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        title="Remove comment"
-                        onClick={() => removeComment(comment.id)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+              <ChevronDown className={feedbackExpanded ? 'expanded' : ''} size={16} />
+            </button>
           ) : null}
-          {generalComments.length > 0 ? (
-            <div className="general-feedback-summary-row">
-              <span className="feedback-row-label general-feedback-label">
-                <MessageSquare size={14} />
-                General feedback
-                <span className="feedback-row-count general-feedback-count">
-                  {generalComments.length}
+          <div
+            className={`feedback-list-panel ${hasManyComments ? 'expanded' : 'compact'}`}
+            hidden={hasManyComments && !feedbackExpanded}
+            id="feedback-list-panel"
+          >
+            {hasManyComments ? (
+              <label className="feedback-search">
+                <Search size={15} />
+                <input
+                  aria-label="Search feedback"
+                  placeholder="Search feedback by file or text"
+                  type="search"
+                  value={feedbackQuery}
+                  onChange={(event) => setFeedbackQuery(event.target.value)}
+                />
+              </label>
+            ) : null}
+            {visibleLineComments.length > 0 ? (
+              <div className="inline-feedback-row">
+                <span className="feedback-row-label inline-feedback-label">
+                  <MessageSquare size={14} />
+                  Inline feedback
+                  <span className="feedback-row-count">{visibleLineComments.length}</span>
                 </span>
-              </span>
-              <div className="general-feedback-list">
-                {generalComments.map((comment) => {
-                  const chip = commentChipInfo(comment);
-                  return (
-                    <div
-                      className={`comment-chip ${chip.tone}`}
-                      key={comment.id}
-                      title={chip.title}
-                    >
-                      <button
-                        className="comment-chip-target"
-                        type="button"
-                        title="View general feedback"
-                        onClick={() => setSelectedGeneralCommentId(comment.id)}
+                <div className="comment-list">
+                  {visibleLineComments.map((comment) => {
+                    const chip = commentChipInfo(comment);
+                    return (
+                      <div
+                        className={`comment-chip ${chip.tone}`}
+                        key={comment.id}
+                        title={chip.title}
                       >
-                        <span className="comment-chip-kind">{chip.kind}</span>
-                        <span className="comment-chip-text">{chip.text}</span>
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        title="Remove comment"
-                        onClick={() => removeComment(comment.id)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  );
-                })}
+                        <button
+                          className="comment-chip-target"
+                          type="button"
+                          title={`Jump to ${chip.title}`}
+                          onClick={() => {
+                            onLineCommentSelect?.(comment);
+                            setFeedbackExpanded(false);
+                            setFeedbackQuery('');
+                          }}
+                        >
+                          <span className="comment-chip-kind">{chip.kind}</span>
+                          <span className="comment-chip-text">{chip.text}</span>
+                          {hasManyComments ? (
+                            <span className="comment-chip-preview">{comment.body}</span>
+                          ) : null}
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Remove comment"
+                          onClick={() => removeComment(comment.id)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
+            {visibleGeneralComments.length > 0 ? (
+              <div className="general-feedback-summary-row">
+                <span className="feedback-row-label general-feedback-label">
+                  <MessageSquare size={14} />
+                  General feedback
+                  <span className="feedback-row-count general-feedback-count">
+                    {visibleGeneralComments.length}
+                  </span>
+                </span>
+                <div className="general-feedback-list">
+                  {visibleGeneralComments.map((comment) => {
+                    const chip = commentChipInfo(comment);
+                    return (
+                      <div
+                        className={`comment-chip ${chip.tone}`}
+                        key={comment.id}
+                        title={chip.title}
+                      >
+                        <button
+                          className="comment-chip-target"
+                          type="button"
+                          title="View general feedback"
+                          onClick={() => setSelectedGeneralCommentId(comment.id)}
+                        >
+                          <span className="comment-chip-kind">{chip.kind}</span>
+                          <span className="comment-chip-text">{chip.text}</span>
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Remove comment"
+                          onClick={() => removeComment(comment.id)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+            {normalizedFeedbackQuery &&
+            visibleLineComments.length === 0 &&
+            visibleGeneralComments.length === 0 ? (
+              <p className="feedback-search-empty">No feedback matches “{feedbackQuery}”.</p>
+            ) : null}
+          </div>
           <div className="general-feedback-row">
             <form
               className="general-comment-form"
