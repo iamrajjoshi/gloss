@@ -55,19 +55,9 @@ jobs:
           set -euo pipefail
 
           version="${GITHUB_REF_NAME#v}"
-          tarball_url="https://registry.npmjs.org/getgloss/-/getgloss-${version}.tgz"
+          tarball_url="https://github.com/iamrajjoshi/gloss/releases/download/${GITHUB_REF_NAME}/getgloss-${version}.tgz"
+          sha256="$(shasum -a 256 "dist/release/getgloss-${version}.tgz" | awk '{print $1}')"
           tmpdir="$(mktemp -d)"
-
-          for attempt in 1 2 3 4 5 6; do
-            if curl -fsSL "${tarball_url}" -o "${tmpdir}/getgloss.tgz"; then
-              break
-            fi
-            if [ "${attempt}" = "6" ]; then
-              exit 1
-            fi
-            sleep 5
-          done
-          sha256="$(shasum -a 256 "${tmpdir}/getgloss.tgz" | awk '{print $1}')"
 
           git clone https://github.com/iamrajjoshi/homebrew-tap.git "${tmpdir}/homebrew-tap"
           cd "${tmpdir}/homebrew-tap"
